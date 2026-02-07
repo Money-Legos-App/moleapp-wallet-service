@@ -1,0 +1,152 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import { PrismaClient } from '@prisma/client';
+import { env } from './config/environment.js';
+import { logger, morganStream } from './utils/logger.js';
+import walletRoutes from './routes/wallet.routes.js';
+import swapRoutes from './routes/swap.routes.js';
+import treasuryRoutes from './routes/treasury.routes.js';
+import agentRoutes from './routes/agent.routes.js';
+
+const app = express();
+const prisma = new PrismaClient();
+
+// Security and middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+app.use(cors({
+  origin: env.nodeEnv === 'production' 
+    ? ['https://app.moleapp.io', 'https://admin.moleapp.io']
+    : ['http://localhost:3000', 'http://localhost:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// HTTP logging
+app.use(morgan('combined', { stream: morganStream }));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    service: 'wallet-service',
+    version: '2.0.0',
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    environment: env.nodeEnv
+  });
+});
+
+// API routes
+app.use('/api/v2/wallet', walletRoutes);
+app.use('/api/v2/swap', swapRoutes);
+app.use('/api/v2/treasury', treasuryRoutes);
+
+// Internal agent routes (for agent-service only)
+app.use('/internal/v1/agent', agentRoutes);
+
+// V1 Compatibility routes for legacy services
+app.use('/api/v1/wallets', walletRoutes);
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'NOT_FOUND',
+    message: `Route ${req.method} ${req.originalUrl} not found`
+  });
+});
+
+// Global error handler
+app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error('Unhandled error:', {
+    error: error.message,
+    stack: error.stack,
+    url: req.url,
+    method: req.method,
+    body: req.body,
+    query: req.query,
+    params: req.params
+  });
+
+  res.status(error.status || 500).json({
+    success: false,
+    error: 'INTERNAL_SERVER_ERROR',
+    message: env.nodeEnv === 'production' 
+      ? 'An unexpected error occurred'
+      : error.message,
+    ...(env.nodeEnv !== 'production' && { stack: error.stack })
+  });
+});
+
+// Graceful shutdown handling
+const gracefulShutdown = async (signal: string) => {
+  logger.info(`Received ${signal}. Starting graceful shutdown...`);
+  
+  try {
+    // Close database connection
+    await prisma.$disconnect();
+    logger.info('Database connection closed');
+    
+    // Exit process
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during graceful shutdown:', error);
+    process.exit(1);
+  }
+};
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('UNHANDLED_REJECTION');
+});
+
+// Start server
+const server = app.listen(env.port, () => {
+  logger.info(`🚀 Wallet Service v2.0.0 started successfully`);
+  logger.info(`📡 Server running on port ${env.port}`);
+  logger.info(`🌍 Environment: ${env.nodeEnv}`);
+  logger.info(`🔐 Turnkey Organization: ${env.turnkeyOrganizationId}`);
+  logger.info(`⚡ Account Abstraction: Kernel v3.1 + EntryPoint v0.7`);
+  logger.info(`🛡️  Bundler: Pimlico`);
+  logger.info(`💳 Paymaster: Sponsored transactions enabled`);
+  logger.info(`🔄 Swap: 0x API integration (Sepolia)`);
+  logger.info(`💰 Treasury: On/off-ramp settlements enabled`);
+  
+  // Test database connection
+  prisma.$connect()
+    .then(() => {
+      logger.info('✅ Database connected successfully');
+    })
+    .catch((error) => {
+      logger.error('❌ Database connection failed:', error);
+    });
+});
+
+export default app;

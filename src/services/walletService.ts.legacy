@@ -1,0 +1,935 @@
+import { PrismaClient } from '@prisma/client';
+import { Address, Hex } from 'viem';
+import { TurnkeyService } from './turnkey/index.js';
+import { KernelService } from './kernel/account-abstraction.service.js';
+import { logger } from '../utils/logger.js';
+import { NETWORKS, getSupportedChainKeys, getNetworkConfig } from '../config/networks.js';
+import {
+  CreateWalletRequest,
+  CreateWalletResponse,
+  SignTransactionRequest,
+  SignTransactionResponse,
+  RecoverWalletRequest,
+  RecoverWalletResponse,
+  UserOperationRequest,
+  UserOperationResponse
+} from '../types/index.js';
+
+export class WalletService {
+  private prisma: PrismaClient;
+  private turnkeyService: TurnkeyService;
+  private kernelService: KernelService;
+
+  constructor(prisma: PrismaClient) {
+    this.prisma = prisma;
+    this.turnkeyService = new TurnkeyService(prisma);
+    this.kernelService = new KernelService(prisma, this.turnkeyService);
+  }
+
+
+
+  async submitUserOperation(request: UserOperationRequest): Promise<UserOperationResponse> {
+    try {
+      logger.info(`Submitting user operation for wallet ${request.walletId}`);
+
+      const { walletId, chainId, calls, sponsorUserOperation = true } = request;
+
+      // Validate wallet exists
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { id: walletId }
+      });
+
+      if (!wallet) {
+        throw new Error('Wallet not found');
+      }
+
+      // Submit user operation via Kernel service
+      const result = await this.kernelService.submitUserOperation(
+        walletId,
+        chainId,
+        calls,
+        sponsorUserOperation
+      );
+
+      // Create transaction records for each call
+      const transactions = await Promise.all(
+        calls.map(call => 
+          this.prisma.transaction.create({
+            data: {
+              walletId,
+              toAddress: call.to,
+              value: call.value.toString(),
+              chainId,
+              transactionType: 'contract_call',
+              status: 'pending',
+              metadata: {
+                userOpHash: result.userOpHash,
+                sponsored: sponsorUserOperation,
+                callData: call.data
+              }
+            }
+          })
+        )
+      );
+
+      logger.info(`Created ${transactions.length} transaction records for user operation ${result.userOpHash}`);
+
+      return {
+        userOpHash: result.userOpHash,
+        sponsored: sponsorUserOperation
+      };
+
+    } catch (error) {
+      logger.error('Failed to submit user operation:', error);
+      throw error;
+    }
+  }
+
+  async signTransaction(request: SignTransactionRequest): Promise<SignTransactionResponse> {
+    try {
+      logger.info(`Signing transaction for wallet ${request.walletId}`);
+
+      const { walletId, to, value, data, chainId } = request;
+
+      // Convert to user operation format
+      const calls = [{
+        to,
+        value: BigInt(value),
+        data
+      }];
+
+      const result = await this.submitUserOperation({
+        walletId,
+        chainId,
+        calls,
+        sponsorUserOperation: true
+      });
+
+      return {
+        signature: result.userOpHash,
+        userOpHash: result.userOpHash,
+        transactionHash: undefined // Will be available after bundler processes
+      };
+
+    } catch (error) {
+      logger.error('Failed to sign transaction:', error);
+      throw error;
+    }
+  }
+
+  async recoverWallet(request: RecoverWalletRequest): Promise<RecoverWalletResponse> {
+    try {
+      logger.info(`Recovering wallet for user ${request.userId}`);
+
+      const { userId, phoneNumber } = request;
+
+      // Attempt to recover via Turnkey
+      const recoveryResult = await this.turnkeyService.recoverWallet(phoneNumber);
+      
+      if (!recoveryResult) {
+        throw new Error('No wallet found for this phone number');
+      }
+
+      // Get all wallets for this user
+      const wallets = await this.prisma.wallet.findMany({
+        where: { userId },
+        include: {
+          kernelAccounts: true
+        }
+      });
+
+      const walletList = wallets.map((wallet: any) => ({
+        walletId: wallet.id,
+        address: wallet.address as Address,
+        chainId: wallet.chainId,
+        isRecovered: true
+      }));
+
+      logger.info(`Recovered ${walletList.length} wallets for user ${userId}`);
+
+      return {
+        wallets: walletList,
+        turnkeySubOrgId: recoveryResult.subOrgId
+      };
+
+    } catch (error) {
+      logger.error('Failed to recover wallet:', error);
+      throw error;
+    }
+  }
+
+  async getWalletsByUser(userId: string) {
+    try {
+      const wallets = await this.prisma.wallet.findMany({
+        where: { userId, isActive: true },
+        include: {
+          balances: true,
+          kernelAccounts: true,
+          transactions: {
+            take: 10,
+            orderBy: { createdAt: 'desc' }
+          }
+        }
+      });
+
+      return wallets;
+    } catch (error) {
+      logger.error('Failed to get user wallets:', error);
+      throw error;
+    }
+  }
+
+  async getWalletById(walletId: string) {
+    try {
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { id: walletId },
+        include: {
+          user: true,
+          balances: true,
+          kernelAccounts: true,
+          transactions: {
+            take: 20,
+            orderBy: { createdAt: 'desc' }
+          },
+          userOperations: {
+            take: 10,
+            orderBy: { createdAt: 'desc' }
+          }
+        }
+      });
+
+      return wallet;
+    } catch (error) {
+      logger.error('Failed to get wallet:', error);
+      throw error;
+    }
+  }
+
+  async deployWallet(walletId: string, chainId: number) {
+    try {
+      logger.info(`Deploying wallet ${walletId} on chain ${chainId}`);
+
+      const result = await this.kernelService.deployKernelAccount(walletId, chainId);
+
+      // Update wallet deployment status
+      await this.prisma.wallet.update({
+        where: { id: walletId },
+        data: { 
+          deploymentStatus: 'deployed',
+          lastActivityAt: new Date()
+        }
+      });
+
+      return result;
+
+    } catch (error) {
+      logger.error('Failed to deploy wallet:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create wallets for all supported networks (multi-chain wallet setup)
+   * This ensures the user has access to all supported blockchain networks
+   */
+  async createMultiChainWallets(userId: string): Promise<CreateWalletResponse[]> {
+    try {
+      logger.info(`Creating multi-chain wallets for user ${userId}`);
+
+      // Get user information
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Check existing wallets to avoid duplicates
+      const existingWallets = await this.prisma.wallet.findMany({
+        where: { userId, isActive: true },
+        include: {
+          kernelAccounts: true
+        }
+      });
+
+      const existingChainIds = new Set(existingWallets.map(w => w.chainId));
+      logger.info(`User ${userId} already has wallets on chains: [${Array.from(existingChainIds).join(', ')}]`);
+
+      // Get all supported chain keys
+      const supportedChainKeys = getSupportedChainKeys();
+      const results: CreateWalletResponse[] = [];
+
+      // Create Turnkey sub-organization once (reuse for all wallets)
+      let sharedSubOrgId: string | undefined;
+      let sharedTurnkeyUserId: string | undefined;
+      let turnkeyAddresses: any = {};
+
+      // Process each supported network
+      for (const chainKey of supportedChainKeys) {
+        try {
+          const networkConfig = getNetworkConfig(chainKey);
+          const chainId = networkConfig.chainId; // null for non-EVM chains
+
+          // Create unique identifier for chain comparison
+          const chainIdentifier = chainId || chainKey;
+
+          // Skip if wallet already exists for this chain
+          const existingWallet = existingWallets.find(w =>
+            (chainId && w.chainId === chainId) ||
+            (!chainId && w.metadata && (w.metadata as any).chainKey === chainKey)
+          );
+
+          if (existingWallet) {
+            logger.info(`Wallet already exists for ${chainKey}`);
+
+            const signer = await this.prisma.turnkeySigner.findFirst({
+              where: { walletId: existingWallet.id }
+            });
+
+            results.push({
+              walletId: existingWallet.id,
+              address: existingWallet.address as Address,
+              chainId: existingWallet.chainId || 0, // 0 for non-EVM
+              deploymentStatus: existingWallet.deploymentStatus as 'counterfactual' | 'deployed',
+              turnkeySubOrgId: signer?.turnkeySubOrgId || '',
+              turnkeyUserId: signer?.turnkeyUserId || ''
+            });
+            continue;
+          }
+
+          logger.info(`Creating wallet for ${chainKey} (chainType: ${networkConfig.chainType})`);
+
+          // Initialize shared sub-org on first wallet creation
+          if (!sharedSubOrgId) {
+            logger.info(`🔧 [MULTICHAIN] Initializing shared Turnkey sub-org for user ${userId}`);
+
+            // Check if user already has a sub-org
+            const existingSigner = await this.prisma.turnkeySigner.findFirst({
+              where: { userId }
+            });
+
+            if (existingSigner && existingSigner.turnkeySubOrgId) {
+              sharedSubOrgId = existingSigner.turnkeySubOrgId;
+              sharedTurnkeyUserId = existingSigner.turnkeyUserId;
+              logger.info(`♻️ [MULTICHAIN] Using existing sub-org: ${sharedSubOrgId}`);
+            } else {
+              // Create new sub-org
+              logger.info(`🆕 [MULTICHAIN] Creating new sub-org for user ${userId}`);
+              const createResult = await this.turnkeyService.createSubOrganizationForUser(
+                userId,
+                user.phoneNumber,
+                user.email || undefined
+              );
+              sharedSubOrgId = createResult.subOrgId;
+              sharedTurnkeyUserId = createResult.turnkeyUserId;
+            }
+
+            // Fetch all addresses from Turnkey
+            try {
+              logger.info(`📡 [MULTICHAIN] Fetching all addresses from Turnkey for sub-org: ${sharedSubOrgId}`);
+              turnkeyAddresses = await this.turnkeyService.getAllWalletsFromTurnkey(sharedSubOrgId);
+              logger.info(`📋 [MULTICHAIN] Fetched addresses from Turnkey:`, {
+                subOrgId: sharedSubOrgId,
+                ethereum: turnkeyAddresses.ethereum,
+                solana: turnkeyAddresses.solana,
+                bitcoin: turnkeyAddresses.bitcoin
+              });
+            } catch (error) {
+              logger.error(`❌ [MULTICHAIN] Failed to fetch Turnkey addresses:`, error);
+              turnkeyAddresses = {};
+            }
+          }
+
+          // For EVM chains, create wallet directly with shared sub-org
+          if (networkConfig.chainType === 'EVM' && chainId) {
+            // Determine the address to use based on Turnkey data
+            const walletAddress = turnkeyAddresses.ethereum || `0x${Math.random().toString(16).substring(2, 42)}`;
+
+            // Create EVM wallet directly without duplicate sub-org creation
+            const walletName = `${networkConfig.name} Wallet`;
+
+            // Check if wallet with this address already exists
+            const existingEvmWallet = await this.prisma.wallet.findUnique({
+              where: { address: walletAddress as Address }
+            });
+
+            let wallet;
+            if (existingEvmWallet) {
+              logger.warn(`⚠️ [MULTICHAIN] EVM wallet ${walletAddress} already exists, updating...`);
+              wallet = await this.prisma.wallet.update({
+                where: { id: existingEvmWallet.id },
+                data: {
+                  userId,
+                  name: walletName,
+                  chainId,
+                  isActive: true,
+                  lastActivityAt: new Date(),
+                  metadata: {
+                    turnkeySubOrgId: sharedSubOrgId!,
+                    turnkeyUserId: sharedTurnkeyUserId!,
+                    createdVia: 'multichain',
+                    updatedAt: new Date().toISOString()
+                  }
+                }
+              });
+            } else {
+              wallet = await this.prisma.wallet.create({
+                data: {
+                  userId,
+                  address: walletAddress as Address,
+                  name: walletName,
+                  chainId,
+                  walletType: 'smart_wallet',
+                  deploymentStatus: 'counterfactual',
+                  ownerAddress: walletAddress as Address,
+                  isActive: true,
+                  metadata: {
+                    turnkeySubOrgId: sharedSubOrgId!,
+                    turnkeyUserId: sharedTurnkeyUserId!,
+                    createdVia: 'multichain'
+                  }
+                }
+              });
+            }
+
+            // Create kernel account for EVM chains
+            await this.kernelService.createKernelAccount(
+              userId,
+              chainId,
+              walletAddress as Address,
+              sharedSubOrgId!,
+              wallet.id
+            );
+
+            // Ensure TurnkeySigner exists
+            const existingTurnkeySigner = await this.prisma.turnkeySigner.findFirst({
+              where: {
+                userId,
+                turnkeySubOrgId: sharedSubOrgId!
+              }
+            });
+
+            if (!existingTurnkeySigner) {
+              await this.prisma.turnkeySigner.create({
+                data: {
+                  userId,
+                  address: walletAddress as Address,
+                  turnkeyUserId: sharedTurnkeyUserId!,
+                  turnkeySubOrgId: sharedSubOrgId!,
+                  walletId: wallet.id,
+                  phoneHash: `phone_${userId}`,
+                  publicKey: '',
+                  isActive: true
+                }
+              });
+            }
+
+            const walletResult = {
+              walletId: wallet.id,
+              address: walletAddress as Address,
+              chainId,
+              deploymentStatus: 'counterfactual' as const,
+              turnkeySubOrgId: sharedSubOrgId!,
+              turnkeyUserId: sharedTurnkeyUserId!
+            };
+
+            results.push(walletResult);
+            logger.info(`Successfully created ${chainKey} wallet: ${walletResult.address}`);
+
+          } else {
+            // For non-EVM chains (Solana, Bitcoin), create basic wallet records
+            // Sub-org should already be initialized above
+
+            // Get the appropriate address for this chain type
+            let walletAddress = '';
+            if (networkConfig.chainType === 'SOLANA' && turnkeyAddresses.solana) {
+              walletAddress = turnkeyAddresses.solana;
+            } else if (networkConfig.chainType === 'BITCOIN' && turnkeyAddresses.bitcoin) {
+              walletAddress = turnkeyAddresses.bitcoin;
+            } else {
+              logger.warn(`No ${networkConfig.chainType} address found in Turnkey, skipping ${chainKey}`);
+              continue;
+            }
+
+            // Create wallet record for non-EVM chain (with duplicate handling)
+            logger.info(`💾 [MULTICHAIN] Creating ${networkConfig.chainType} wallet: ${walletAddress}`);
+
+            const existingNonEvmWallet = await this.prisma.wallet.findUnique({
+              where: { address: walletAddress as Address }
+            });
+
+            let wallet;
+            if (existingNonEvmWallet) {
+              logger.warn(`⚠️ [MULTICHAIN] ${networkConfig.chainType} wallet ${walletAddress} already exists, updating...`);
+              wallet = await this.prisma.wallet.update({
+                where: { id: existingNonEvmWallet.id },
+                data: {
+                  userId,
+                  name: `${networkConfig.name} Wallet`,
+                  isActive: true,
+                  lastActivityAt: new Date(),
+                  metadata: {
+                    chainKey,
+                    chainType: networkConfig.chainType,
+                    turnkeySubOrgId: sharedSubOrgId,
+                    turnkeyUserId: sharedTurnkeyUserId,
+                    createdVia: 'multichain_direct',
+                    updatedAt: new Date().toISOString()
+                  }
+                }
+              });
+            } else {
+              wallet = await this.prisma.wallet.create({
+                data: {
+                  userId,
+                  address: walletAddress as Address,
+                  name: `${networkConfig.name} Wallet`,
+                  chainId: 0, // Use 0 for non-EVM chains
+                  walletType: networkConfig.chainType === 'SOLANA' ? 'solana_wallet' : 'bitcoin_wallet',
+                  deploymentStatus: 'deployed', // Non-EVM wallets are immediately "deployed"
+                  ownerAddress: walletAddress as Address,
+                  isActive: true,
+                  metadata: {
+                    chainKey,
+                    chainType: networkConfig.chainType,
+                    turnkeySubOrgId: sharedSubOrgId,
+                    turnkeyUserId: sharedTurnkeyUserId,
+                    createdVia: 'multichain_direct'
+                  }
+                }
+              });
+            }
+
+            // Create or update Turnkey signer record
+            await this.prisma.turnkeySigner.upsert({
+              where: {
+                turnkeySubOrgId: sharedSubOrgId!
+              },
+              update: {
+                walletId: wallet.id,
+                address: walletAddress,
+                isActive: true
+              },
+              create: {
+                userId,
+                walletId: wallet.id,
+                turnkeySubOrgId: sharedSubOrgId!,
+                turnkeyUserId: sharedTurnkeyUserId!,
+                address: walletAddress,
+                publicKey: '', // Will be updated later if needed
+                phoneHash: Buffer.from(user.phoneNumber).toString('base64'), // Simple hash for now
+                isActive: true
+              }
+            });
+
+            results.push({
+              walletId: wallet.id,
+              address: walletAddress as Address,
+              chainId: 0,
+              deploymentStatus: 'deployed' as const,
+              turnkeySubOrgId: sharedSubOrgId!,
+              turnkeyUserId: sharedTurnkeyUserId!
+            });
+
+            logger.info(`Successfully created ${chainKey} wallet: ${walletAddress}`);
+          }
+
+        } catch (error) {
+          logger.error(`Failed to create wallet for ${chainKey}:`, error);
+          // Continue with other chains even if one fails
+          continue;
+        }
+      }
+
+      logger.info(`Multi-chain wallet creation completed for user ${userId}. Created ${results.length} wallets.`);
+      return results;
+
+    } catch (error) {
+      logger.error('Failed to create multi-chain wallets:', error);
+      throw new Error(`Failed to create multi-chain wallets: ${error}`);
+    }
+  }
+
+  /**
+   * Get comprehensive multi-chain wallet data for a user
+   * Returns wallet information for all supported networks with metadata
+   */
+  async getUserMultiChainWallets(userId: string) {
+    try {
+      logger.info(`Fetching multi-chain wallets for user ${userId}`);
+
+      const wallets = await this.prisma.wallet.findMany({
+        where: { userId, isActive: true },
+        include: {
+          kernelAccounts: true,
+          transactions: {
+            take: 5,
+            orderBy: { createdAt: 'desc' }
+          }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      // Group wallets by network and add metadata
+      const walletsByNetwork = wallets.map(wallet => {
+        let networkConfig;
+        let chainKey;
+
+        // For EVM chains, find by chainId
+        if (wallet.chainId && wallet.chainId !== 0) {
+          const networkEntry = Object.entries(NETWORKS).find(([_, config]) => config.chainId === wallet.chainId);
+          if (networkEntry) {
+            [chainKey, networkConfig] = networkEntry;
+          }
+        } else {
+          // For non-EVM chains, find by chainKey in metadata
+          const metadataChainKey = (wallet.metadata as any)?.chainKey;
+          if (metadataChainKey && NETWORKS[metadataChainKey]) {
+            chainKey = metadataChainKey;
+            networkConfig = NETWORKS[metadataChainKey];
+          }
+        }
+
+        return {
+          walletId: wallet.id,
+          address: wallet.address,
+          chainId: wallet.chainId,
+          network: networkConfig ? {
+            name: networkConfig.name,
+            chainKey: chainKey,
+            chainType: networkConfig.chainType,
+            currencySymbol: networkConfig.currencySymbol,
+            explorerUrl: networkConfig.explorerUrl,
+            isTestnet: networkConfig.isTestnet
+          } : {
+            name: 'Unknown Network',
+            chainKey: 'UNKNOWN',
+            chainType: 'EVM',
+            currencySymbol: 'UNKNOWN',
+            explorerUrl: '',
+            isTestnet: true
+          },
+          deploymentStatus: wallet.deploymentStatus,
+          walletType: wallet.walletType,
+          isActive: wallet.isActive,
+          createdAt: wallet.createdAt,
+          lastActivityAt: wallet.lastActivityAt,
+          recentTransactions: wallet.transactions.length,
+          kernelAccounts: wallet.kernelAccounts.map(ka => ({
+            id: ka.id,
+            address: ka.address,
+            initCode: ka.initCode,
+            isDeployed: ka.isDeployed
+          }))
+        };
+      });
+
+      // Get all supported networks to show missing wallets (including non-EVM)
+      const supportedNetworks = Object.entries(NETWORKS).map(([chainKey, config]) => {
+        let hasWallet = false;
+
+        if (config.chainType === 'EVM' && config.chainId) {
+          hasWallet = wallets.some(w => w.chainId === config.chainId);
+        } else {
+          // For non-EVM chains, check by chainKey in metadata
+          hasWallet = wallets.some(w => (w.metadata as any)?.chainKey === chainKey);
+        }
+
+        return {
+          chainKey,
+          chainId: config.chainId || 0,
+          name: config.name,
+          chainType: config.chainType,
+          hasWallet
+        };
+      });
+
+      return {
+        wallets: walletsByNetwork,
+        supportedNetworks,
+        totalWallets: wallets.length,
+        evmWallets: walletsByNetwork.filter(w => w.network?.chainType === 'EVM').length,
+        solanaWallets: walletsByNetwork.filter(w => w.network?.chainType === 'SOLANA').length,
+        bitcoinWallets: walletsByNetwork.filter(w => w.network?.chainType === 'BITCOIN').length
+      };
+
+    } catch (error) {
+      logger.error('Failed to get user multi-chain wallets:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Validate and reconcile wallet addresses with Turnkey
+   * This method checks if database addresses match Turnkey and fixes mismatches
+   */
+  async validateAndReconcileWallets(userId: string): Promise<{
+    reconciled: boolean;
+    changes: Array<{
+      walletId: string;
+      oldAddress: string;
+      newAddress: string;
+      chainType: string;
+    }>;
+    errors: string[];
+  }> {
+    try {
+      logger.info(`🔍 [RECONCILE] Starting wallet validation and reconciliation for user ${userId}`);
+
+      const wallets = await this.prisma.wallet.findMany({
+        where: { userId, isActive: true }
+      });
+
+      // Get Turnkey signers separately
+      const turnkeySigners = await this.prisma.turnkeySigner.findMany({
+        where: { userId, isActive: true }
+      });
+
+      if (wallets.length === 0) {
+        return { reconciled: true, changes: [], errors: [] };
+      }
+
+      // Get the Turnkey sub-organization ID from the first signer
+      const subOrgId = turnkeySigners[0]?.turnkeySubOrgId;
+      if (!subOrgId) {
+        logger.warn(`No Turnkey sub-organization found for user ${userId}`);
+        return {
+          reconciled: false,
+          changes: [],
+          errors: ['No Turnkey sub-organization found']
+        };
+      }
+
+      // Fetch current addresses from Turnkey
+      let turnkeyAddresses;
+      try {
+        logger.info(`📡 [RECONCILE] Fetching Turnkey addresses for validation from sub-org: ${subOrgId}`);
+        turnkeyAddresses = await this.turnkeyService.getAllWalletsFromTurnkey(subOrgId);
+        logger.info(`📋 [RECONCILE] Fetched Turnkey addresses for validation:`, {
+          subOrgId,
+          ethereum: turnkeyAddresses.ethereum,
+          solana: turnkeyAddresses.solana,
+          bitcoin: turnkeyAddresses.bitcoin
+        });
+      } catch (error: any) {
+        logger.error(`❌ [RECONCILE] Failed to fetch Turnkey addresses for validation:`, error);
+        return {
+          reconciled: false,
+          changes: [],
+          errors: [`Failed to fetch Turnkey addresses: ${error.message}`]
+        };
+      }
+
+      const changes: Array<{
+        walletId: string;
+        oldAddress: string;
+        newAddress: string;
+        chainType: string;
+      }> = [];
+      const errors: string[] = [];
+
+      // Check each wallet for address mismatches
+      for (const wallet of wallets) {
+        try {
+          let expectedAddress: string | undefined;
+          let chainType: string;
+
+          // Determine expected address based on wallet type
+          if (wallet.chainId && wallet.chainId !== 0) {
+            // EVM wallet
+            expectedAddress = turnkeyAddresses.ethereum;
+            chainType = 'ETHEREUM';
+          } else if ((wallet.metadata as any)?.chainType === 'SOLANA') {
+            expectedAddress = turnkeyAddresses.solana;
+            chainType = 'SOLANA';
+          } else if ((wallet.metadata as any)?.chainType === 'BITCOIN') {
+            expectedAddress = turnkeyAddresses.bitcoin;
+            chainType = 'BITCOIN';
+          } else {
+            chainType = 'UNKNOWN';
+          }
+
+          // Check for mismatch
+          if (expectedAddress && wallet.address !== expectedAddress) {
+            logger.warn(`Address mismatch for wallet ${wallet.id}:`, {
+              current: wallet.address,
+              expected: expectedAddress,
+              chainType
+            });
+
+            // Update the wallet address
+            await this.prisma.wallet.update({
+              where: { id: wallet.id },
+              data: {
+                address: expectedAddress,
+                lastActivityAt: new Date()
+              }
+            });
+
+            // Update Turnkey signer address
+            const turnkeySigner = turnkeySigners.find(s => s.walletId === wallet.id);
+            if (turnkeySigner) {
+              await this.prisma.turnkeySigner.update({
+                where: { id: turnkeySigner.id },
+                data: { address: expectedAddress }
+              });
+            }
+
+            // Update user's primary wallet address if this is the main ETH wallet
+            if (chainType === 'ETHEREUM') {
+              await this.prisma.user.update({
+                where: { id: userId },
+                data: { walletAddress: expectedAddress }
+              });
+            }
+
+            changes.push({
+              walletId: wallet.id,
+              oldAddress: wallet.address,
+              newAddress: expectedAddress,
+              chainType
+            });
+
+            logger.info(`Reconciled wallet ${wallet.id} address: ${wallet.address} → ${expectedAddress}`);
+          }
+
+        } catch (error: any) {
+          const errorMsg = `Failed to reconcile wallet ${wallet.id}: ${error.message}`;
+          logger.error(errorMsg, error);
+          errors.push(errorMsg);
+        }
+      }
+
+      const reconciled = errors.length === 0;
+      logger.info(`Wallet reconciliation completed for user ${userId}:`, {
+        reconciled,
+        changesCount: changes.length,
+        errorsCount: errors.length
+      });
+
+      return { reconciled, changes, errors };
+
+    } catch (error: any) {
+      logger.error(`Failed to validate and reconcile wallets for user ${userId}:`, error);
+      return {
+        reconciled: false,
+        changes: [],
+        errors: [`Validation failed: ${error.message}`]
+      };
+    }
+  }
+
+  /**
+   * Clean up orphaned wallet records and reset for fresh testing
+   */
+  async cleanupUserWallets(userId: string): Promise<{
+    cleaned: boolean;
+    deletedWallets: number;
+    deletedKernelAccounts: number;
+    deletedSigners: number;
+    errors: string[];
+  }> {
+    try {
+      logger.info(`🧹 [CLEANUP] Starting wallet cleanup for user ${userId}`);
+
+      const errors: string[] = [];
+      let deletedWallets = 0;
+      let deletedKernelAccounts = 0;
+      let deletedSigners = 0;
+
+      // Get all user wallets
+      const userWallets = await this.prisma.wallet.findMany({
+        where: { userId },
+        include: {
+          kernelAccounts: true
+        }
+      });
+
+      logger.info(`🔍 [CLEANUP] Found ${userWallets.length} wallets for user ${userId}`);
+
+      // Delete kernel accounts first (due to foreign key constraints)
+      for (const wallet of userWallets) {
+        try {
+          if (wallet.kernelAccounts.length > 0) {
+            const deleted = await this.prisma.kernelAccount.deleteMany({
+              where: { walletId: wallet.id }
+            });
+            deletedKernelAccounts += deleted.count;
+            logger.info(`🗑️ [CLEANUP] Deleted ${deleted.count} kernel accounts for wallet ${wallet.id}`);
+          }
+        } catch (error: any) {
+          const errorMsg = `Failed to delete kernel accounts for wallet ${wallet.id}: ${error.message}`;
+          logger.error(errorMsg);
+          errors.push(errorMsg);
+        }
+      }
+
+      // Delete wallets
+      try {
+        const deleted = await this.prisma.wallet.deleteMany({
+          where: { userId }
+        });
+        deletedWallets = deleted.count;
+        logger.info(`🗑️ [CLEANUP] Deleted ${deleted.count} wallets for user ${userId}`);
+      } catch (error: any) {
+        const errorMsg = `Failed to delete wallets: ${error.message}`;
+        logger.error(errorMsg);
+        errors.push(errorMsg);
+      }
+
+      // Delete Turnkey signers
+      try {
+        const deleted = await this.prisma.turnkeySigner.deleteMany({
+          where: { userId }
+        });
+        deletedSigners = deleted.count;
+        logger.info(`🗑️ [CLEANUP] Deleted ${deleted.count} Turnkey signers for user ${userId}`);
+      } catch (error: any) {
+        const errorMsg = `Failed to delete Turnkey signers: ${error.message}`;
+        logger.error(errorMsg);
+        errors.push(errorMsg);
+      }
+
+      // Reset user wallet address
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { walletAddress: null }
+        });
+        logger.info(`🔄 [CLEANUP] Reset user wallet address to null`);
+      } catch (error: any) {
+        const errorMsg = `Failed to reset user wallet address: ${error.message}`;
+        logger.error(errorMsg);
+        errors.push(errorMsg);
+      }
+
+      const cleaned = errors.length === 0;
+      logger.info(`✅ [CLEANUP] Cleanup completed for user ${userId}:`, {
+        cleaned,
+        deletedWallets,
+        deletedKernelAccounts,
+        deletedSigners,
+        errorsCount: errors.length
+      });
+
+      return {
+        cleaned,
+        deletedWallets,
+        deletedKernelAccounts,
+        deletedSigners,
+        errors
+      };
+
+    } catch (error: any) {
+      logger.error(`❌ [CLEANUP] Failed to cleanup wallets for user ${userId}:`, error);
+      return {
+        cleaned: false,
+        deletedWallets: 0,
+        deletedKernelAccounts: 0,
+        deletedSigners: 0,
+        errors: [`Cleanup failed: ${error.message}`]
+      };
+    }
+  }
+}

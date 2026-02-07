@@ -1,0 +1,1708 @@
+// ===========================================================================
+// UNIFIED PRISMA SCHEMA - Single source of truth for all microservices
+// ===========================================================================
+// ALL services share this schema via the db-migrate init container.
+// Individual services MUST NOT run `prisma db push` — only `prisma generate`.
+// ===========================================================================
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// USER & AUTH MODELS
+// ================================
+
+model User {
+  id            String    @id @default(uuid())
+  phoneNumber   String    @unique
+  isVerified    Boolean   @default(false)
+  firstName     String?
+  lastName      String?
+  email         String?   @unique
+  walletAddress String?   @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  address       String?
+  city          String?
+  country       String?
+  dateOfBirth   DateTime?
+  gender        String?
+  idNumber      String?   @unique
+  idType        String?
+  kycData       Json?
+  kycStatus     String    @default("PENDING")
+  monthlyIncome String?
+  nationality   String?
+  occupation    String?
+  turnkeySubOrgId String?  @unique
+  turnkeyUserId   String?
+
+  // Relations
+  sessions      Session[]
+  otpCodes      OTPCode[]
+  wallets       Wallet[]
+  sessionKeys   SessionKey[]
+  notifications Notification[]
+  momoTransactions MomoTransaction[]
+  devices       Device[]
+  notificationSettings NotificationSettings?
+  walletMappings WalletMomoMapping[]
+  transactionLimits TransactionLimit[]
+  walletActivity WalletActivity[]
+  auditLogs     AuditLog[]
+  kernelAccounts KernelAccount[]
+  userAddresses UserAddress[]
+
+  // Passkey authentication
+  passkeyCredentials PasskeyCredential[]
+  socialRecoveryGuardians SocialRecoveryGuardian[]
+  recoverySessions RecoverySession[]
+  passkeySecurityEvents PasskeySecurityEvent[]
+  authChallenges AuthChallenge[]
+  webauthnChallenges WebAuthnChallenge[]
+
+  // DeFi / Morpho
+  commissionRecords CommissionRecord[]
+  morphoTransactions MorphoTransaction[]
+  morphoMarketPositions MorphoMarketPosition[]
+  morphoVaultPositions MorphoVaultPosition[]
+
+  @@map("users")
+}
+
+model OTPCode {
+  id        String   @id @default(uuid())
+  code      String
+  expiresAt DateTime
+  isUsed    Boolean  @default(false)
+  purpose   String
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("otp_codes")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ================================
+// MULTI-CHAIN WALLET MODELS
+// ================================
+
+model UserAddress {
+  id               String   @id @default(uuid())
+  userId           String
+  chainType        String
+  chainId          Int?
+  address          String
+  addressFormat    String
+  derivationPath   String
+  curve            String
+  isActive         Boolean  @default(true)
+  isPrimary        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chainType, isPrimary])
+  @@map("user_addresses")
+}
+
+// ================================
+// WALLET SERVICE MODELS
+// ================================
+
+model Wallet {
+  id               String    @id @default(uuid())
+  address          String
+  name             String    @default("My Wallet")
+  userId           String
+  chainId          Int       @default(11155111)
+  walletType       String    @default("smart_wallet")
+  deploymentStatus String    @default("counterfactual")
+  nonce            BigInt    @default(0)
+  factoryAddress   String?
+  ownerAddress     String?
+  isActive         Boolean   @default(true)
+  lastActivityAt   DateTime  @default(now())
+  metadata         Json      @default("{}")
+  totalGasUsed     Decimal   @default(0) @db.Decimal(30,0)
+  totalGasCostUsd  Decimal   @default(0) @db.Decimal(20,8)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balances         Balance[]
+  transactions     Transaction[]
+  sessionKeys      SessionKey[]
+  crossChainTxSource CrossChainTransaction[] @relation("SourceWallet")
+  walletActivity   WalletActivity[]
+  gasAnalytics     GasAnalytics[]
+  kernelAccounts   KernelAccount[]
+  userOperations   UserOperation[]
+  deFiBundledOperations DeFiBundledOperation[]
+
+  @@unique([address, chainId])
+  @@map("wallets")
+}
+
+model Balance {
+  id                String   @id @default(uuid())
+  walletId          String
+  tokenAddress      String   @default("native")
+  balance           Decimal  @default(0) @db.Decimal(78,18)
+  chainId           Int      @default(11155111)
+  tokenName         String?
+  tokenSymbol       String?
+  tokenDecimals     Int      @default(18)
+  tokenIconUrl      String?
+  balanceUsd        Decimal  @default(0) @db.Decimal(20,8)
+  pricePerTokenUsd  Decimal  @default(0) @db.Decimal(20,8)
+  isVerified        Boolean  @default(false)
+  isSpam            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  wallet            Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("balances")
+}
+
+model Transaction {
+  id                      String    @id @default(uuid())
+  walletId                String
+  hash                    String?   @unique
+  fromAddress             String?
+  toAddress               String?
+  value                   Decimal?  @db.Decimal(78,18)
+  status                  String    @default("pending")
+  chainId                 Int       @default(11155111)
+  transactionType         String    @default("transfer")
+  gasLimit                BigInt?
+  gasUsed                 BigInt?
+  gasPrice                Decimal?  @db.Decimal(30,0)
+  maxFeePerGas            Decimal?  @db.Decimal(30,0)
+  maxPriorityFeePerGas    Decimal?  @db.Decimal(30,0)
+  gasCostWei              Decimal?  @db.Decimal(30,0)
+  gasCostUsd              Decimal?  @db.Decimal(20,8)
+  blockNumber             BigInt?
+  blockTimestamp          DateTime?
+  confirmationCount       Int       @default(0)
+  tokenAddress            String?
+  tokenAmount             Decimal?  @db.Decimal(30,0)
+  metadata                Json      @default("{}")
+  errorMessage            String?
+  internalTransactions    Json      @default("[]")
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  wallet                  Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model Network {
+  id                    String   @id @default(uuid())
+  chainId               Int      @unique
+  name                  String
+  shortName             String
+  currencySymbol        String
+  rpcUrl                String
+  explorerUrl           String?
+  iconUrl               String?
+  isTestnet             Boolean  @default(false)
+  isActive              Boolean  @default(true)
+  entryPointAddress     String?
+  walletFactoryAddress  String?
+  blockTimeSeconds      Int      @default(12)
+  confirmationBlocks    Int      @default(12)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("networks")
+}
+
+model TokenMetadata {
+  id              String   @id @default(uuid())
+  address         String
+  chainId         Int
+  name            String
+  symbol          String
+  decimals        Int
+  iconUrl         String?
+  isVerified      Boolean  @default(false)
+  isSpam          Boolean  @default(false)
+  totalSupply     Decimal? @db.Decimal(30,0)
+  marketCapUsd    Decimal? @db.Decimal(20,2)
+  priceUsd        Decimal? @db.Decimal(20,8)
+  priceChange24h  Decimal? @db.Decimal(10,4)
+  volume24hUsd    Decimal? @db.Decimal(20,2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([address, chainId])
+  @@map("token_metadata")
+}
+
+model CrossChainTransaction {
+  id                    String   @id @default(uuid())
+  userId                String
+  sourceWalletId        String
+  sourceChainId         Int
+  destinationChainId    Int
+  sourceTxHash          String?
+  destinationTxHash     String?
+  tokenAddress          String?
+  amount                Decimal  @db.Decimal(30,0)
+  bridgeProvider        String?
+  status                String   @default("pending")
+  estimatedTimeMinutes  Int?
+  actualTimeMinutes     Int?
+  bridgeFeeUsd          Decimal? @db.Decimal(20,8)
+  exchangeRate          Decimal? @db.Decimal(20,8)
+  metadata              Json     @default("{}")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  sourceWallet          Wallet   @relation("SourceWallet", fields: [sourceWalletId], references: [id], onDelete: Cascade)
+
+  @@map("cross_chain_transactions")
+}
+
+model WalletActivity {
+  id              String   @id @default(uuid())
+  walletId        String
+  userId          String
+  activityType    String
+  chainId         Int
+  transactionHash String?
+  amount          Decimal? @db.Decimal(30,0)
+  tokenAddress    String?
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_activity")
+}
+
+model GasAnalytics {
+  id              String   @id @default(uuid())
+  walletId        String
+  chainId         Int
+  transactionType String
+  gasLimit        BigInt
+  gasUsed         BigInt
+  gasPrice        Decimal  @db.Decimal(30,0)
+  gasCostWei      Decimal  @db.Decimal(30,0)
+  gasCostUsd      Decimal? @db.Decimal(20,8)
+  blockNumber     BigInt?
+  timestamp       DateTime @default(now())
+
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("gas_analytics")
+}
+
+// ================================
+// ACCOUNT ABSTRACTION MODELS
+// ================================
+
+model SessionKey {
+  id              String   @id @default(uuid())
+  userId          String
+  walletId        String
+  walletAddress   String
+  sessionKey      String   @unique
+  expiresAt       DateTime
+  permissions     String[] @default([])
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  lastUsedAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  turnkeySignerId String?
+  turnkeySubOrgId String?
+
+  maxValue        Decimal? @db.Decimal(30,0)
+  allowedTargets  String[] @default([])
+  rateLimit       Json?    @default("{}")
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, walletId])
+  @@index([walletAddress, isActive])
+  @@index([expiresAt, isActive])
+  @@map("session_keys")
+}
+
+model TurnkeySigner {
+  id              String   @id @default(uuid())
+  userId          String
+  walletId        String
+  turnkeyUserId   String   @unique
+  turnkeySubOrgId String   @unique
+  publicKey       String
+  address         String   @unique
+  phoneHash       String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  passkeyConfig   Json?    @default("{}")
+  authMethods     String[] @default(["passkey"])
+
+  // Relations
+  agentMissions   AgentMission[]
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([phoneHash])
+  @@map("turnkey_signers")
+}
+
+model KernelAccount {
+  id                String   @id @default(uuid())
+  userId            String
+  walletId          String
+  chainId           Int
+  address           String
+  ownerAddress      String
+  index             Int      @default(0)
+  isDeployed        Boolean  @default(false)
+  deploymentHash    String?
+  turnkeyUserId     String?
+  turnkeySubOrgId   String?
+  factoryAddress    String?
+  initCode          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet            Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([address, chainId])
+  @@index([userId, chainId])
+  @@index([walletId, chainId])
+  @@map("kernel_accounts")
+}
+
+model UserOperation {
+  id              String   @id @default(uuid())
+  walletId        String
+  chainId         Int
+  userOpHash      String   @unique
+  transactionHash String?
+  blockNumber     Int?
+  status          String   @default("pending")
+  gasUsed         Int?
+  gasCostUsd      Decimal? @db.Decimal(20,8)
+  transactions    Json
+  metadata        Json?    @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, chainId])
+  @@index([userOpHash])
+  @@index([transactionHash])
+  @@index([status, createdAt])
+  @@map("user_operations")
+}
+
+// ================================
+// NOTIFICATION SERVICE MODELS
+// ================================
+
+model Notification {
+  id          String             @id @default(uuid())
+  userId      String
+  title       String
+  message     String
+  type        NotificationType
+  isRead      Boolean            @default(false)
+  data        Json?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model NotificationSettings {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  pushEnabled          Boolean  @default(true)
+  emailEnabled         Boolean  @default(true)
+  transactionAlerts    Boolean  @default(true)
+  securityAlerts       Boolean  @default(true)
+  marketingAlerts      Boolean  @default(false)
+  priceAlerts          Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_settings")
+}
+
+model Device {
+  id          String    @id @default(uuid())
+  userId      String
+  token       String    @unique
+  deviceType  String
+  isActive    Boolean   @default(true)
+  lastUsed    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("devices")
+}
+
+// ================================
+// PASSKEY AUTHENTICATION MODELS
+// ================================
+
+model PasskeyCredential {
+  id                    String   @id @default(uuid())
+  userId                String
+  credentialId          String   @unique
+  publicKey             String
+  publicKeyFormat       String?
+
+  // Web3 specific fields
+  turnkeySubOrgId       String?
+  supportedChains       String[] @default(["ETHEREUM", "BNB", "SOLANA", "BITCOIN"])
+  authLevel             String?  @default("BIOMETRIC_ONLY")
+  dailyLimitUsd         Decimal? @default(1000.00) @db.Decimal(20,2)
+
+  // Turnkey sub-organization details
+  turnkeyUserId         String?
+  turnkeyWalletId       String?
+  walletAddress         String?
+
+  // Security tracking
+  counter               Int      @default(0)
+  riskScore             Int?     @default(0)
+  lastUsedAt            DateTime? @default(now())
+  deviceFingerprint     Json?    @default("{}")
+
+  // Recovery configuration
+  recoveryConfig        Json?    @default("{}")
+  isRecoveryKey         Boolean? @default(false)
+
+  // Device info
+  deviceName            String?
+  deviceType            String?
+  deviceModel           String?
+  biometricType         String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions              PasskeySession[]
+
+  @@index([userId])
+  @@index([turnkeySubOrgId])
+  @@index([credentialId])
+  @@index([userId, createdAt])
+  @@map("passkey_credentials")
+}
+
+model PasskeySession {
+  id                    String   @id @default(uuid())
+  passkeyCredentialId   String
+  sessionKeyPublic      String
+  permissions           Json
+  dailySpentUsd         Decimal  @default(0) @db.Decimal(20,2)
+  expiresAt             DateTime
+  chainId               Int
+
+  ipAddress             String?
+  userAgent             String?
+  lastUsedAt            DateTime @default(now())
+
+  createdAt             DateTime @default(now())
+
+  passkeyCredential     PasskeyCredential @relation(fields: [passkeyCredentialId], references: [id], onDelete: Cascade)
+
+  @@index([passkeyCredentialId])
+  @@index([expiresAt])
+  @@map("passkey_sessions")
+}
+
+model SocialRecoveryGuardian {
+  id                    String   @id @default(uuid())
+  userId                String
+  guardianAddress       String
+  guardianType          String
+  guardianName          String?
+  threshold             Int
+  weight                Int      @default(1)
+  isActive              Boolean  @default(true)
+
+  contactInfo           Json?
+  lastContactedAt       DateTime?
+  recoveryAttempts      Int      @default(0)
+
+  addedAt               DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  initiatedRecoveries   RecoverySession[] @relation("InitiatedBy")
+  guardianRecoveries    RecoverySession[] @relation("GuardianVotes")
+
+  @@index([userId])
+  @@index([guardianAddress])
+  @@map("social_recovery_guardians")
+}
+
+model RecoverySession {
+  id                    String   @id @default(uuid())
+  userId                String
+  initiatedByGuardianId String
+
+  recoveryReason        String
+  newCredentialId       String?
+  requiredVotes         Int
+  currentVotes          Int      @default(0)
+
+  status                String   @default("PENDING")
+  expiresAt             DateTime
+
+  challengeHash         String
+  verificationCode      String
+
+  createdAt             DateTime @default(now())
+  completedAt           DateTime?
+
+  user                  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  initiatedBy           SocialRecoveryGuardian @relation("InitiatedBy", fields: [initiatedByGuardianId], references: [id])
+  guardianVotes         SocialRecoveryGuardian[] @relation("GuardianVotes")
+
+  @@index([userId])
+  @@index([status, expiresAt])
+  @@map("recovery_sessions")
+}
+
+model PasskeySecurityEvent {
+  id                    String   @id @default(uuid())
+  userId                String
+  passkeyCredentialId   String?
+
+  eventType             String
+  eventSeverity         String
+  description           String
+
+  ipAddress             String?
+  userAgent             String?
+  location              Json?
+  deviceFingerprint     Json?
+
+  riskScore             Int      @default(0)
+  anomalyFlags          String[] @default([])
+
+  actionTaken           String?
+
+  createdAt             DateTime @default(now())
+
+  user                  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([eventType, eventSeverity])
+  @@index([riskScore])
+  @@map("passkey_security_events")
+}
+
+model AuthChallenge {
+  id           String   @id @default(uuid())
+  challengeId  String   @unique
+  challenge    String
+  userId       String?
+  phoneNumber  String?
+  firstName    String?
+  lastName     String?
+  email        String?
+  type         String
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime @default(dbgenerated("(now() + interval '10 minutes')"))
+
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([challengeId])
+  @@index([expiresAt])
+  @@index([phoneNumber])
+  @@index([userId])
+  @@map("auth_challenges")
+}
+
+model WebAuthnChallenge {
+  id        String   @id @default(uuid())
+  challenge String   @unique
+  userId    String
+  type      String
+  purpose   String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([challenge, expiresAt])
+  @@map("webauthn_challenges")
+}
+
+// ================================
+// MOMO SERVICE MODELS
+// ================================
+
+model MomoProvider {
+  id                    String   @id @default(uuid())
+  name                  String   @unique
+  displayName           String
+  country               String
+  isActive              Boolean  @default(true)
+  apiConfig             Json
+
+  onRampFeePercent      Decimal @default(0.01) @db.Decimal(5, 4)
+  offRampFeePercent     Decimal @default(0.015) @db.Decimal(5, 4)
+  fixedFeeAmount        Decimal @default(0) @db.Decimal(10, 2)
+
+  minTransactionAmount  Decimal @default(500) @db.Decimal(20, 8)
+  maxTransactionAmount  Decimal @default(1000000) @db.Decimal(20, 8)
+  dailyLimit            Decimal @default(2000000) @db.Decimal(20, 8)
+  monthlyLimit          Decimal @default(50000000) @db.Decimal(20, 8)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  transactions          MomoTransaction[]
+  walletMappings        WalletMomoMapping[]
+  transactionFees       TransactionFee[]
+
+  @@map("momo_providers")
+}
+
+model MomoTransaction {
+  id                  String      @id @default(uuid())
+  userId              String
+  walletAddress       String
+  providerId          String
+
+  // Provider adapter pattern
+  providerCode        String?
+
+  // Payment method
+  paymentMethod       PaymentMethod @default(OTP_PAYMENT)
+
+  // Transaction lifecycle stage
+  lifecycleStage      String      @default("CREATED")
+
+  // Transaction details
+  type                TransactionType
+  status              TransactionStatus @default(PENDING)
+  amount              Decimal     @db.Decimal(20, 8)
+  currency            String
+  cryptoAmount        Decimal?    @db.Decimal(20, 8)
+  cryptoCurrency      String?
+  exchangeRate        Decimal?    @db.Decimal(20, 8)
+
+  // Provider transaction details
+  providerTxId        String?
+  providerRef         String?
+  phoneNumber         String
+
+  // OTP Payment specific fields
+  otpCode             String?
+  otpVerifiedAt       DateTime?
+  otpExpiry           DateTime?
+  isVerified          Boolean     @default(false)
+  encryptedPinUsed    Boolean     @default(false)
+
+  // FSM State Management
+  currentState        String      @default("CREATED")
+  stateUpdatedAt      DateTime    @default(now())
+
+  // Orange Money specific fields
+  payToken            String?
+  notifToken          String?
+
+  // USSD timeout tracking
+  ussdTimeoutAt       DateTime?
+
+  // Idempotency
+  idempotencyKey      String?     @unique
+
+  // Polling tracking
+  pollingAttempts     Int         @default(0)
+  lastPollingAt       DateTime?
+
+  // Refund tracking
+  refundTxHash        String?
+  refundedAt          DateTime?
+  refundReason        String?
+
+  // Blockchain transaction details
+  blockchainTxHash    String?
+  blockNumber         BigInt?
+  gasUsed             BigInt?
+  gasFee              Decimal?    @db.Decimal(20, 8)
+
+  // Reconciliation and compliance
+  isReconciled        Boolean     @default(false)
+  reconciledAt        DateTime?
+  complianceStatus    ComplianceStatus @default(PENDING)
+  complianceNotes     String?
+
+  // Additional data
+  metadata            Json?
+  failureReason       String?
+
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  // Relations
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider            MomoProvider @relation(fields: [providerId], references: [id])
+  fees                TransactionFee[]
+  webhooks            WebhookDelivery[]
+  stateHistory        TransactionStateHistory[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([providerTxId])
+  @@index([blockchainTxHash])
+  @@index([currentState, createdAt])
+  @@index([idempotencyKey])
+  @@map("momo_transactions")
+}
+
+model TransactionFee {
+  id            String      @id @default(uuid())
+  transactionId String
+  providerId    String
+
+  feeType       FeeType
+  amount        Decimal     @db.Decimal(20, 8)
+  currency      String
+  percentage    Decimal?    @db.Decimal(5, 4)
+
+  gasPrice      Decimal?    @db.Decimal(20, 8)
+  gasLimit      BigInt?
+  gasUsed       BigInt?
+
+  createdAt     DateTime    @default(now())
+
+  transaction   MomoTransaction @relation(fields: [transactionId], references: [id])
+  provider      MomoProvider @relation(fields: [providerId], references: [id])
+
+  @@map("transaction_fees")
+}
+
+model WalletMomoMapping {
+  id            String      @id @default(uuid())
+  userId        String
+  walletAddress String
+  providerId    String
+  phoneNumber   String
+  isActive      Boolean     @default(true)
+  isVerified    Boolean     @default(false)
+
+  kycStatus     KycStatus   @default(PENDING)
+  kycLevel      Int         @default(1)
+  verifiedAt    DateTime?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      MomoProvider @relation(fields: [providerId], references: [id])
+
+  @@unique([userId, providerId])
+  @@index([phoneNumber])
+  @@map("wallet_momo_mappings")
+}
+
+model TransactionLimit {
+  id                  String      @id @default(uuid())
+  userId              String
+  providerId          String
+
+  dailyUsed           Decimal     @default(0) @db.Decimal(20, 8)
+  monthlyUsed         Decimal     @default(0) @db.Decimal(20, 8)
+
+  lastDailyReset      DateTime    @default(now())
+  lastMonthlyReset    DateTime    @default(now())
+
+  customDailyLimit    Decimal?    @db.Decimal(20, 8)
+  customMonthlyLimit  Decimal?    @db.Decimal(20, 8)
+
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, providerId])
+  @@map("transaction_limits")
+}
+
+model WebhookDelivery {
+  id            String      @id @default(uuid())
+  transactionId String
+
+  webhookUrl    String
+  eventType     String
+  payload       Json
+
+  status        WebhookStatus @default(PENDING)
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(3)
+  lastAttempt   DateTime?
+  nextAttempt   DateTime?
+
+  responseCode  Int?
+  responseBody  String?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  transaction   MomoTransaction @relation(fields: [transactionId], references: [id])
+
+  @@index([status, nextAttempt])
+  @@map("webhook_deliveries")
+}
+
+// ================================
+// FSM STATE TRACKING (momo-service)
+// ================================
+
+model TransactionStateHistory {
+  id                String      @id @default(uuid())
+  transactionId     String
+  previousState     String?
+  currentState      String
+  trigger           String
+  verificationData  Json?
+  errorMessage      String?
+  metadata          Json?
+  createdAt         DateTime    @default(now())
+
+  transaction       MomoTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId, createdAt])
+  @@map("transaction_state_history")
+}
+
+// ================================
+// IDEMPOTENCY KEYS (momo-service)
+// ================================
+
+model IdempotencyKey {
+  id              String      @id @default(uuid())
+  key             String      @unique
+  transactionId   String?
+  requestHash     String
+  responseData    Json?
+  status          IdempotencyStatus @default(PENDING)
+  expiresAt       DateTime
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([key, status])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ================================
+// OAUTH TOKEN CACHE (momo-service)
+// ================================
+
+model OAuthTokenCache {
+  id              String      @id @default(uuid())
+  provider        String      @unique
+  accessToken     String      @db.Text
+  refreshToken    String?     @db.Text
+  tokenType       String      @default("Bearer")
+  expiresAt       DateTime
+  scopes          String[]    @default([])
+  metadata        Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([provider, expiresAt])
+  @@map("oauth_token_cache")
+}
+
+// ================================
+// ORANGE MONEY PUBLIC KEY CACHE (momo-service)
+// ================================
+
+model OrangePublicKeyCache {
+  id              String      @id @default(uuid())
+  keyId           String      @unique
+  publicKey       String      @db.Text
+  expiresAt       DateTime
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([expiresAt])
+  @@map("orange_public_key_cache")
+}
+
+// ================================
+// QUEUE JOB TRACKING (momo-service)
+// ================================
+
+model QueueJob {
+  id              String      @id @default(uuid())
+  jobId           String      @unique
+  queueName       String
+  transactionId   String?
+  jobType         String
+  status          QueueJobStatus @default(PENDING)
+  attempts        Int         @default(0)
+  maxAttempts     Int         @default(3)
+  lastAttemptAt   DateTime?
+  nextAttemptAt   DateTime?
+  resultData      Json?
+  errorMessage    String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([queueName, status])
+  @@index([transactionId])
+  @@map("queue_jobs")
+}
+
+// ================================
+// TREASURY LEDGER (wallet-service)
+// ================================
+
+model TreasuryLedger {
+  id              String            @id @default(uuid())
+  transactionId   String
+
+  debitAccount    String
+  creditAccount   String
+  amount          Decimal           @db.Decimal(30, 18)
+  currency        String
+
+  entryType       LedgerEntryType
+
+  txHash          String?
+  chainId         Int?
+  blockNumber     BigInt?
+  confirmations   Int               @default(0)
+
+  status          LedgerEntryStatus @default(PENDING)
+  errorMessage    String?
+
+  description     String?
+  fiatAmount      Decimal?          @db.Decimal(20, 8)
+  fiatCurrency    String?
+  exchangeRate    Decimal?          @db.Decimal(20, 8)
+  provider        String?
+  metadata        Json?
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  createdBy       String?
+
+  @@index([transactionId])
+  @@index([debitAccount])
+  @@index([creditAccount])
+  @@index([entryType, createdAt])
+  @@index([status, createdAt])
+  @@index([txHash])
+  @@map("treasury_ledger")
+}
+
+// ================================
+// LIQUIDITY & EXCHANGE MODELS
+// ================================
+
+model LiquidityPool {
+  id              String      @id @default(uuid())
+  name            String
+  currency        String
+  cryptoCurrency  String
+
+  fiatBalance     Decimal     @db.Decimal(20, 8)
+  cryptoBalance   Decimal     @db.Decimal(20, 8)
+
+  minReserveRatio Decimal     @db.Decimal(5, 4)
+  maxSlippage     Decimal     @db.Decimal(5, 4)
+
+  dexAddress      String?
+  poolAddress     String?
+
+  lastRebalance   DateTime?
+  autoRebalance   Boolean     @default(false)
+
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("liquidity_pools")
+}
+
+model ExchangeRate {
+  id            String      @id @default(uuid())
+  fromCurrency  String
+  toCurrency    String
+  rate          Decimal     @db.Decimal(20, 8)
+  source        String
+
+  bid           Decimal?    @db.Decimal(20, 8)
+  ask           Decimal?    @db.Decimal(20, 8)
+  spread        Decimal?    @db.Decimal(5, 4)
+  volume24h     Decimal?    @db.Decimal(20, 8)
+
+  expiresAt     DateTime?
+
+  createdAt     DateTime    @default(now())
+
+  @@unique([fromCurrency, toCurrency, source])
+  @@index([fromCurrency, toCurrency, createdAt])
+  @@map("exchange_rates")
+}
+
+// ================================
+// AUDIT AND SYSTEM MODELS
+// ================================
+
+model AuditLog {
+  id            String      @id @default(uuid())
+  userId        String?
+  action        String
+  entityType    String
+  entityId      String
+
+  oldValues     Json?
+  newValues     Json?
+  ipAddress     String?
+  userAgent     String?
+
+  createdAt     DateTime    @default(now())
+
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model AgentAuditLog {
+  id            String      @id @default(uuid())
+  missionId     String?
+  userId        String?
+  node          String      // market_analysis, user_filter, execution, monitoring, lifecycle
+  action        String      // llm_call, signal_generated, signal_skipped, filter_decision, trade_executed, trade_failed, force_close, emergency_exit, withdrawal
+  asset         String?
+
+  // LLM audit fields
+  llmPrompt     String?     @db.Text
+  llmResponse   String?     @db.Text
+  llmModel      String?
+  llmTokens     Int?
+
+  // Decision fields
+  decision      Json?       // Structured decision (signal, filter result, etc.)
+  reasoning     String?     @db.Text
+
+  // Context
+  metadata      Json?       // Additional context (market data, position details)
+  success       Boolean     @default(true)
+  errorMessage  String?     @db.Text
+  dryRun        Boolean     @default(false)
+
+  createdAt     DateTime    @default(now())
+
+  @@index([missionId, createdAt])
+  @@index([node, createdAt])
+  @@index([action, createdAt])
+  @@map("agent_audit_logs")
+}
+
+// ================================
+// COMMISSION TRACKING MODELS
+// ================================
+
+model CommissionRecord {
+  id                 String    @id @default(uuid())
+  userId             String
+  transactionId      String    @unique
+  type               CommissionType
+  grossAmount        Float
+  commission         Float
+  netAmount          Float
+  currency           String
+  provider           String?
+  blockchainTxHash   String?
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("commission_records")
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ================================
+// MORPHO SERVICE MODELS
+// ================================
+
+model MorphoTransaction {
+  id                 String              @id @default(uuid())
+  userId             String
+  type               MorphoTransactionType
+  marketId           String?
+  vaultAddress       String?
+  amount             String
+  asset              String
+  blockHash          String?
+  transactionHash    String?
+  blockNumber        BigInt?
+  gasUsed            String?
+  status             MorphoTransactionStatus @default(PENDING)
+  commission         String?
+  commissionRate     Float?
+  metadata           Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("morpho_transactions")
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([marketId])
+  @@index([vaultAddress])
+  @@index([createdAt])
+}
+
+model MorphoMarketPosition {
+  id                 String              @id @default(uuid())
+  userId             String
+  marketId           String
+  userAddress        String
+  supplyShares       String              @default("0")
+  borrowShares       String              @default("0")
+  collateral         String              @default("0")
+  lastUpdate         DateTime            @default(now())
+  metadata           Json?
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+  @@map("morpho_market_positions")
+  @@index([userId])
+  @@index([marketId])
+  @@index([userAddress])
+}
+
+model MorphoVaultPosition {
+  id                 String              @id @default(uuid())
+  userId             String
+  vaultAddress       String
+  userAddress        String
+  shares             String              @default("0")
+  assets             String              @default("0")
+  lastUpdate         DateTime            @default(now())
+  metadata           Json?
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vaultAddress])
+  @@map("morpho_vault_positions")
+  @@index([userId])
+  @@index([vaultAddress])
+  @@index([userAddress])
+}
+
+model MorphoMarket {
+  id                 String              @id
+  loanToken          String
+  collateralToken    String
+  oracle             String
+  irm                String
+  lltv               String
+  totalSupply        String              @default("0")
+  totalBorrow        String              @default("0")
+  supplyApy          Float               @default(0)
+  borrowApy          Float               @default(0)
+  utilizationRate    Float               @default(0)
+  liquidity          String              @default("0")
+  lastUpdate         DateTime            @default(now())
+  metadata           Json?
+
+  @@map("morpho_markets")
+  @@index([loanToken])
+  @@index([collateralToken])
+  @@index([lastUpdate])
+}
+
+model MorphoVault {
+  id                 String              @id @default(uuid())
+  address            String              @unique
+  name               String
+  symbol             String
+  asset              String
+  totalSupply        String              @default("0")
+  totalAssets        String              @default("0")
+  apy                Float               @default(0)
+  curator            String
+  owner              String
+  timelock           BigInt              @default(0)
+  lastUpdate         DateTime            @default(now())
+  metadata           Json?
+
+  @@map("morpho_vaults")
+  @@index([asset])
+  @@index([apy])
+  @@index([lastUpdate])
+}
+
+// ================================
+// DEFI BUNDLING MODELS
+// ================================
+
+model DeFiBundledOperation {
+  id                 String              @id @default(uuid())
+  walletId           String
+  chainId            Int
+  userOpHash         String              @unique
+  protocol           String
+  operations         Json
+  callsCount         Int
+  status             DeFiBundleStatus    @default(PENDING)
+  gasUsed            String?
+  blockNumber        BigInt?
+  transactionHash    String?
+  metadata           Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  wallet             Wallet              @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("defi_bundled_operations")
+  @@index([walletId])
+  @@index([protocol])
+  @@index([status])
+  @@index([chainId])
+  @@index([createdAt])
+}
+
+model DeFiProtocolIntegration {
+  id                 String              @id @default(uuid())
+  protocol           String              @unique
+  chainId            Int
+  contractAddress    String
+  isActive           Boolean             @default(true)
+  configuration      Json
+  supportedOperations String[]
+  gasOptimizations   Json?
+  lastUpdate         DateTime            @default(now())
+  metadata           Json?
+
+  @@unique([protocol, chainId])
+  @@map("defi_protocol_integrations")
+  @@index([protocol])
+  @@index([chainId])
+  @@index([isActive])
+}
+
+// ================================
+// ALKEBULAN AGENT MODELS
+// ================================
+
+model AgentMission {
+  id                  String           @id @default(uuid())
+  userId              String
+  walletId            String
+
+  // Reuse existing Turnkey wallet (from TurnkeySigner)
+  turnkeySignerId     String?
+
+  // Per-mission agent key (unique per mission for security isolation)
+  agentAddress        String?
+  agentPrivateKeyEnc  String?
+  agentKeyIv          String?
+  agentKeyTag         String?
+
+  // Hyperliquid agent approval status
+  hyperliquidApproved Boolean          @default(false)
+  approvalTxHash      String?
+
+  // Mission configuration
+  strategy            StrategyType     @default(SHORT_TERM_30D)
+  riskLevel           AgentRiskLevel   @default(MODERATE)
+  durationDays        Int              @default(30)
+  startedAt           DateTime?
+  endsAt              DateTime?
+
+  // Funding
+  initialCapital      Decimal          @db.Decimal(20,8)
+  currentValue        Decimal?         @db.Decimal(20,8)
+  depositCurrency     String           @default("USDC")
+
+  // Trading constraints
+  maxLeverage         Int              @default(3)
+  allowedAssets       String[]         @default(["ETH-USD", "BTC-USD"])
+
+  // Status
+  status              MissionStatus    @default(PENDING)
+  pausedAt            DateTime?
+  completedAt         DateTime?
+
+  // Performance (updated by agent-service)
+  totalPnl            Decimal          @default(0) @db.Decimal(20,8)
+  totalTrades         Int              @default(0)
+  winRate             Float            @default(0)
+  maxDrawdown         Float            @default(0)
+
+  // Flexible metadata (deposit tracking, bridge tx hashes, etc.)
+  metadata            Json?            @default("{}")
+
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  // Relations
+  turnkeySigner       TurnkeySigner?   @relation(fields: [turnkeySignerId], references: [id])
+  positions           AgentPosition[]
+  executions          AgentTradeExecution[]
+  pnlSnapshots        AgentPnLSnapshot[]
+
+  @@index([userId, status])
+  @@index([endsAt, status])
+  @@index([agentAddress])
+  @@map("agent_missions")
+}
+
+model AgentSignal {
+  id                  String           @id @default(uuid())
+  signalId            String           @unique
+
+  // Strategy Object from DeepSeek
+  direction           TradeDirection
+  asset               String
+  confidence          ConfidenceLevel
+  recommendedLeverage Int              @default(1)
+  reasoning           String           @db.Text
+  strategyTag         String
+
+  // RAG context
+  ragContextIds       String[]
+  maxDrawdown30d      Float?
+  volatilityScore     Float?
+
+  // Processing
+  generatedAt         DateTime         @default(now())
+  expiresAt           DateTime
+  isProcessed         Boolean          @default(false)
+  processedAt         DateTime?
+
+  // Metrics
+  usersNotified       Int              @default(0)
+  ordersGenerated     Int              @default(0)
+  ordersExecuted      Int              @default(0)
+
+  @@index([generatedAt])
+  @@index([asset, direction])
+  @@index([isProcessed, expiresAt])
+  @@map("agent_signals")
+}
+
+model AgentPosition {
+  id                  String           @id @default(uuid())
+  missionId           String
+  signalId            String?
+
+  // Position details
+  asset               String
+  direction           TradeDirection
+  entryPrice          Decimal          @db.Decimal(20,8)
+  currentPrice        Decimal          @db.Decimal(20,8)
+  quantity            Decimal          @db.Decimal(20,8)
+  leverage            Int              @default(1)
+
+  // Hyperliquid specifics
+  hyperliquidOrderId  String?
+  marginUsed          Decimal          @db.Decimal(20,8)
+  liquidationPrice    Decimal?         @db.Decimal(20,8)
+
+  // PnL tracking
+  unrealizedPnl       Decimal          @default(0) @db.Decimal(20,8)
+  realizedPnl         Decimal          @default(0) @db.Decimal(20,8)
+  fundingPaid         Decimal          @default(0) @db.Decimal(20,8)
+
+  // Status
+  status              PositionStatus   @default(OPEN)
+  openedAt            DateTime         @default(now())
+  closedAt            DateTime?
+  closeReason         String?
+
+  // Risk management
+  stopLossPrice       Decimal?         @db.Decimal(20,8)
+  takeProfitPrice     Decimal?         @db.Decimal(20,8)
+
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  // Relations
+  mission             AgentMission     @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId, status])
+  @@index([asset, status])
+  @@map("agent_positions")
+}
+
+model AgentTradeExecution {
+  id                  String           @id @default(uuid())
+  missionId           String
+  signalId            String?
+
+  // Execution details
+  action              String
+  asset               String
+  quantity            Decimal?         @db.Decimal(20,8)
+  price               Decimal?         @db.Decimal(20,8)
+
+  // Decision context
+  missionDay          Int?
+  decisionReason      String?          @db.Text
+  userBalanceAtTime   Decimal?         @db.Decimal(20,8)
+
+  // Result
+  success             Boolean
+  hyperliquidTxHash   String?
+  errorMessage        String?
+
+  executedAt          DateTime         @default(now())
+
+  // Relations
+  mission             AgentMission     @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId, executedAt])
+  @@index([signalId])
+  @@map("agent_trade_executions")
+}
+
+model AgentPnLSnapshot {
+  id                  String           @id @default(uuid())
+  missionId           String
+
+  timestamp           DateTime         @default(now())
+  totalValue          Decimal          @db.Decimal(20,8)
+  totalPnl            Decimal          @db.Decimal(20,8)
+  unrealizedPnl       Decimal          @db.Decimal(20,8)
+  realizedPnl         Decimal          @db.Decimal(20,8)
+
+  // Relations
+  mission             AgentMission     @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId, timestamp])
+  @@map("agent_pnl_snapshots")
+}
+
+// ================================
+// ALL ENUMS
+// ================================
+
+enum NotificationType {
+  TRANSACTION
+  SECURITY
+  MARKETING
+  PRICE_ALERT
+  SYSTEM
+  OTP
+}
+
+enum TransactionType {
+  ON_RAMP
+  OFF_RAMP
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum ComplianceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  UNDER_REVIEW
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum FeeType {
+  PLATFORM_FEE
+  PROVIDER_FEE
+  NETWORK_FEE
+  EXCHANGE_FEE
+}
+
+enum WebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  USSD_PUSH
+  OTP_PAYMENT
+  WEB_REDIRECT
+  QR_CODE
+  DIRECT_DEBIT
+}
+
+enum IdempotencyStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum QueueJobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  DELAYED
+  RETRYING
+}
+
+enum DeFiBundleStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  PARTIALLY_EXECUTED
+}
+
+enum LedgerEntryType {
+  ON_RAMP_CREDIT
+  OFF_RAMP_DEBIT
+  OFF_RAMP_REFUND
+  FEE_COLLECTION
+  TREASURY_DEPOSIT
+  TREASURY_WITHDRAWAL
+}
+
+enum LedgerEntryStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+  REVERTED
+}
+
+enum CommissionType {
+  FIAT_ONRAMP
+  FIAT_OFFRAMP
+  DEFI_LENDING
+  SUPPLY_COMMISSION
+  BORROW_COMMISSION
+  LIQUIDATION_COMMISSION
+  YIELD_COMMISSION
+  VAULT_MANAGEMENT_FEE
+  VAULT_PERFORMANCE_FEE
+}
+
+enum MorphoTransactionType {
+  SUPPLY
+  WITHDRAW
+  BORROW
+  REPAY
+  LIQUIDATE
+  SUPPLY_COLLATERAL
+  WITHDRAW_COLLATERAL
+  VAULT_DEPOSIT
+  VAULT_WITHDRAW
+}
+
+enum MorphoTransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+// Agent Service Enums
+enum MissionStatus {
+  PENDING
+  DEPOSITING
+  APPROVING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  LIQUIDATED
+  REVOKED
+}
+
+enum StrategyType {
+  SHORT_TERM_30D
+  LONG_TERM_45D
+  CUSTOM
+}
+
+enum AgentRiskLevel {
+  CONSERVATIVE
+  MODERATE
+  AGGRESSIVE
+}
+
+enum TradeDirection {
+  LONG
+  SHORT
+}
+
+enum ConfidenceLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
+}
