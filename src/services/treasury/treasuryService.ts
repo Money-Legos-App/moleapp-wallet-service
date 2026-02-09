@@ -14,13 +14,11 @@
  * - Support for multiple chains (Polygon, Sepolia)
  */
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../lib/prisma';
 import { createPublicClient, createWalletClient, http, parseUnits, formatUnits, Address, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { polygon, sepolia } from 'viem/chains';
 import { logger } from '../../utils/logger';
-
-const prisma = new PrismaClient();
 
 // ================================
 // CONFIGURATION

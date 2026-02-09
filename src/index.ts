@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './lib/prisma';
 import { env } from './config/environment.js';
 import { logger, morganStream } from './utils/logger.js';
 import walletRoutes from './routes/wallet.routes.js';
@@ -11,7 +11,6 @@ import treasuryRoutes from './routes/treasury.routes.js';
 import agentRoutes from './routes/agent.routes.js';
 
 const app = express();
-const prisma = new PrismaClient();
 
 // Security and middleware
 app.use(helmet({

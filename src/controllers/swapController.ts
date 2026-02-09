@@ -5,7 +5,7 @@
  */
 
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { SwapService } from '../services/swap/swap.service.js';
 import { TurnkeyService } from '../services/turnkey/index.js';
 import { KernelService } from '../services/kernel/account-abstraction.service.js';
@@ -18,8 +18,6 @@ import type {
   SwapExecuteRequest,
   SwapErrorCode,
 } from '../services/swap/swap.types.js';
-
-const prisma = new PrismaClient();
 
 // Initialize services
 const turnkeyService = new TurnkeyService(prisma);

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../../lib/prisma';
 import { EVMBaseService } from './base.service.js';
 import { KernelService } from '../../../services/kernel/account-abstraction.service.js';
 import { EVMChainKey } from '../../types.js';

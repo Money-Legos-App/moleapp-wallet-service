@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../../lib/prisma';
 import { Address } from 'viem';
 import { logger } from '../../../utils/logger.js';
 import { EVMChainService, CreateWalletResponse, UserOperationRequest, UserOperationResponse, DeploymentResponse, GasEstimate } from '../../types.js';

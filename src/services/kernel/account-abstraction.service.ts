@@ -1,7 +1,7 @@
 import { createZeroDevPaymasterClient } from '@zerodev/sdk';
 import { getEntryPoint } from '@zerodev/sdk/constants';
 import { Address, Hex, createPublicClient, http } from 'viem';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { getNetworkConfigByChainId } from '../../config/networks.js';
 import { logger } from '../../utils/logger.js';
 import { TurnkeyService } from '../turnkey/index.js';

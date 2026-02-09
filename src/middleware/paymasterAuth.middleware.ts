@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { ResponseUtils } from '../utils/responseUtils';
-
-const prisma = new PrismaClient();
 
 /**
  * Extended request with AA binding claims from Keycloak token

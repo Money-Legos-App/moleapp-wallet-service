@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { hashTypedData, keccak256, toBytes } from 'viem';
 import { logger } from '../utils/logger.js';
-
-const prisma = new PrismaClient();
 
 /**
  * Agent Controller

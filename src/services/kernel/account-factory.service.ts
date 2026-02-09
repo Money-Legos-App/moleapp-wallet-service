@@ -2,7 +2,7 @@ import { createKernelAccount, createZeroDevPaymasterClient, createKernelAccountC
 import { signerToEcdsaValidator } from '@zerodev/ecdsa-validator';
 import { KERNEL_V3_1, getEntryPoint } from '@zerodev/sdk/constants';
 import { Address, Chain, createPublicClient, Hex, http } from 'viem';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { getUserOperationGasPrice } from 'permissionless/actions/pimlico';
 import { getNetworkConfigByChainId } from '../../config/networks.js';
 import { logger } from '../../utils/logger.js';

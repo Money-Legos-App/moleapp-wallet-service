@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { Address } from 'viem';
 import { TurnkeyBaseService } from './base.service.js';
 import { env } from '../../config/environment.js';

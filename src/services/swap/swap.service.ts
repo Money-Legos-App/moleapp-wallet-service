@@ -10,7 +10,7 @@
  * - Quote caching with validation
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import {
   Address,
   Hex,

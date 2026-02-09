@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../lib/prisma';
 import { EVMBaseService, EVMChainFactory } from './secp256k1/evm/index.js';
 import { BitcoinService } from './secp256k1/bitcoin/service.js';
 import { SolanaService } from './ed25519/solana/service.js';

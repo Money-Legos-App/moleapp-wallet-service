@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { Address, Hex, hashTypedData, TypedDataDefinition } from 'viem';
 import { privateKeyToAccount, signTypedData as viemSignTypedData, signMessage as viemSignMessage } from 'viem/accounts';
 import { TurnkeyBaseService } from './base.service.js';

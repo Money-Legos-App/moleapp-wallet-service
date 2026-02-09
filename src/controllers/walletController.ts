@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { WalletOrchestrator } from '../services/wallet/orchestrator.service.js';
 import { TurnkeyService } from '../services/turnkey/index.js';
 import { ChainServiceFactory } from '../chains/factory.js';
@@ -16,8 +16,6 @@ import {
   UserOperationRequest,
   ErrorResponse
 } from '../types/index.js';
-
-const prisma = new PrismaClient();
 
 // Initialize services for orchestrator
 const turnkeyService = new TurnkeyService(prisma);
