@@ -59,6 +59,7 @@ model User {
   auditLogs     AuditLog[]
   kernelAccounts KernelAccount[]
   userAddresses UserAddress[]
+  turnkeySigners TurnkeySigner[]
 
   // Passkey authentication
   passkeyCredentials PasskeyCredential[]
@@ -158,6 +159,7 @@ model Wallet {
   kernelAccounts   KernelAccount[]
   userOperations   UserOperation[]
   deFiBundledOperations DeFiBundledOperation[]
+  turnkeySigners   TurnkeySigner[]
 
   @@unique([address, chainId])
   @@map("wallets")
@@ -358,7 +360,7 @@ model SessionKey {
 model TurnkeySigner {
   id              String   @id @default(uuid())
   userId          String
-  walletId        String
+  walletId        String?
   turnkeyUserId   String   @unique
   turnkeySubOrgId String   @unique
   publicKey       String
@@ -372,6 +374,8 @@ model TurnkeySigner {
   authMethods     String[] @default(["passkey"])
 
   // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet          Wallet?  @relation(fields: [walletId], references: [id], onDelete: SetNull)
   agentMissions   AgentMission[]
 
   @@index([userId])

@@ -93,9 +93,9 @@ export const verifyAABinding = async (
     }
 
     // AA Binding verified - fetch wallet info and attach to request
-    const wallet = await prisma.wallet.findUnique({
-      where: { id: signerAccount.walletId }
-    });
+    const wallet = signerAccount.walletId
+      ? await prisma.wallet.findUnique({ where: { id: signerAccount.walletId } })
+      : null;
     req.wallet = wallet;
     logger.debug('AA Binding verified successfully', {
       userId: req.user?.id,

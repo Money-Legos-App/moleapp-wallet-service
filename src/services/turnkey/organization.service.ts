@@ -243,7 +243,6 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
         await this.prisma.turnkeySigner.create({
           data: {
             userId,
-            walletId: `temp-wallet-${userId.slice(0, 8)}`, // Will be updated later
             turnkeyUserId,
             turnkeySubOrgId: subOrgId,
             publicKey: `temp-public-key-${subOrgId.slice(0, 8)}`, // Will be updated by user-service

@@ -173,7 +173,6 @@ export class WalletOrchestrator {
                   await this.prisma.turnkeySigner.create({
                     data: {
                       userId,
-                      walletId: `temp-wallet-${userId.slice(0, 8)}`,
                       turnkeyUserId: sharedTurnkeyUserId,
                       turnkeySubOrgId: sharedSubOrgId,
                       publicKey: `temp-public-key-${sharedSubOrgId.slice(0, 8)}`,
@@ -339,6 +338,26 @@ export class WalletOrchestrator {
       }
 
       logger.info(`Multi-chain wallet creation completed for user ${userId}. Created ${results.length} wallets.`);
+
+      // Update TurnkeySigner walletId from temp to real wallet ID
+      // The TurnkeySigner is created early with a temp walletId; now that real wallets exist, link to the primary EVM wallet
+      // Ethereum Sepolia = 11155111, BSC Testnet = 97 — prefer ETH Sepolia as the primary
+      const evmWallet = results.find(r => r.chainId === 11155111) || results.find(r => r.chainId === 97) || results[0];
+      if (evmWallet) {
+        const updated = await this.prisma.turnkeySigner.updateMany({
+          where: {
+            userId,
+            walletId: null
+          },
+          data: {
+            walletId: evmWallet.walletId
+          }
+        });
+        if (updated.count > 0) {
+          logger.info(`✅ [ORCHESTRATOR] Updated TurnkeySigner walletId from temp to ${evmWallet.walletId} for user ${userId}`);
+        }
+      }
+
       return results;
 
     } catch (error) {
