@@ -9,8 +9,12 @@ import walletRoutes from './routes/wallet.routes.js';
 import swapRoutes from './routes/swap.routes.js';
 import treasuryRoutes from './routes/treasury.routes.js';
 import agentRoutes from './routes/agent.routes.js';
+import webhookRoutes from './routes/webhook.routes.js';
 
 const app = express();
+
+// Raw body parser for webhook signature validation (must be BEFORE express.json)
+app.use('/api/v1/webhooks', express.raw({ type: 'application/json' }));
 
 // Security and middleware
 app.use(helmet({
@@ -26,12 +30,12 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: env.nodeEnv === 'production' 
-    ? ['https://app.moleapp.io', 'https://admin.moleapp.io']
-    : ['http://localhost:3000', 'http://localhost:3001'],
+  origin: env.nodeEnv === 'production'
+    ? (process.env.CORS_ORIGINS?.split(',') || ['https://app.moleapp.africa', 'https://admin.moleapp.africa'])
+    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:8081'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Turnkey-Session']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -62,6 +66,9 @@ app.use('/internal/v1/agent', agentRoutes);
 // V1 Compatibility routes for legacy services
 app.use('/api/v1/wallets', walletRoutes);
 
+// Webhook routes (no auth - validated by HMAC signature)
+app.use('/api/v1/webhooks', webhookRoutes);
+
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
@@ -71,25 +78,19 @@ app.use('*', (req, res) => {
   });
 });
 
-// Global error handler
+// Global error handler — never leak stack traces or request bodies to clients
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   logger.error('Unhandled error:', {
     error: error.message,
     stack: error.stack,
     url: req.url,
     method: req.method,
-    body: req.body,
-    query: req.query,
-    params: req.params
   });
 
   res.status(error.status || 500).json({
     success: false,
     error: 'INTERNAL_SERVER_ERROR',
-    message: env.nodeEnv === 'production' 
-      ? 'An unexpected error occurred'
-      : error.message,
-    ...(env.nodeEnv !== 'production' && { stack: error.stack })
+    message: 'An unexpected error occurred',
   });
 });
 

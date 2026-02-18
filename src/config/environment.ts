@@ -90,6 +90,9 @@ export interface EnvironmentConfig {
   // Security
   phoneHashSalt: string;
   
+  // Alchemy webhook
+  alchemyWebhookSigningKey: string;
+
   // Feature flags
   useRealBlockchain: boolean;
   sendSwapNotifications: boolean;
@@ -113,7 +116,9 @@ const validateEnvironment = (): EnvironmentConfig => {
     'TURNKEY_API_PRIVATE_KEY',
     'TURNKEY_API_PUBLIC_KEY',
     'PIMLICO_API_KEY',
-    'PHONE_HASH_SALT'
+    'PHONE_HASH_SALT',
+    'KEYCLOAK_CLIENT_SECRET',
+    'SEPOLIA_RPC_URL'
   ];
 
   for (const envVar of requiredEnvVars) {
@@ -153,8 +158,8 @@ const validateEnvironment = (): EnvironmentConfig => {
     pimlicoBaseUrl: process.env.PIMLICO_BASE_URL || 'https://api.pimlico.io/v2',
     pimlicoSponsorshipPolicyId: getEnvVar('PIMLICO_SPONSORSHIP_POLICY_ID'),
 
-    // Network RPC URLs (prefixed)
-    sepoliaRpcUrl: getEnvVar('SEPOLIA_RPC_URL', 'https://eth-sepolia.g.alchemy.com/v2/lUkI7uYQQMITyFFDcP6KrEzBxA4j4Hl9'),
+    // Network RPC URLs (prefixed) — must be set via env vars for production
+    sepoliaRpcUrl: getEnvVar('SEPOLIA_RPC_URL'),
     bscTestnetRpcUrl: getEnvVar('BSC_TESTNET_RPC_URL', 'https://data-seed-prebsc-1-s1.bnbchain.org:8545'),
     polygonAmoyRpcUrl: getEnvVar('POLYGON_AMOY_RPC_URL', 'https://rpc-amoy.polygon.technology'),
     arbitrumSepoliaRpcUrl: getEnvVar('ARBITRUM_SEPOLIA_RPC_URL', 'https://sepolia-rollup.arbitrum.io/rpc'),
@@ -171,6 +176,9 @@ const validateEnvironment = (): EnvironmentConfig => {
     // Security (prefixed)
     phoneHashSalt: getEnvVar('PHONE_HASH_SALT'),
 
+    // Alchemy webhook
+    alchemyWebhookSigningKey: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY || '',
+
     // Feature flags (shared - no prefix)
     useRealBlockchain: getEnvBool('USE_REAL_BLOCKCHAIN', false),
     sendSwapNotifications: getEnvBool('SEND_SWAP_NOTIFICATIONS', false),
@@ -184,7 +192,7 @@ const validateEnvironment = (): EnvironmentConfig => {
     keycloakUrl: getEnvVar('KEYCLOAK_URL', 'http://localhost:8080'),
     keycloakRealm: getEnvVar('KEYCLOAK_REALM', 'wallet-realm'),
     keycloakClientId: getEnvVar('KEYCLOAK_CLIENT_ID', 'wallet-service'),
-    keycloakClientSecret: getEnvVar('KEYCLOAK_CLIENT_SECRET', 'wallet-service-secret')
+    keycloakClientSecret: getEnvVar('KEYCLOAK_CLIENT_SECRET')
   };
 };
 

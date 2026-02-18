@@ -1,10 +1,26 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { body, param } from 'express-validator';
 import { walletController } from '../controllers/walletController.js';
 import { validateRequest } from '../middleware/validateRequest.js';
-import { authenticate, authenticateWithUserId } from '../middleware/authenticate.js';
+import { authenticate, authenticateWithUserId, AuthenticatedRequest } from '../middleware/authenticate.js';
 
 const router = Router();
+
+// Middleware to enforce that authenticated users can only access their own resources.
+// Service-to-service calls (client credentials with no sub claim) are allowed through.
+const enforceOwnership = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const requestedUserId = req.params.userId || req.body?.userId;
+  const authenticatedUserId = req.userId;
+
+  if (authenticatedUserId && requestedUserId && requestedUserId !== authenticatedUserId) {
+    return res.status(403).json({
+      success: false,
+      error: 'FORBIDDEN',
+      message: 'You do not have permission to access this resource',
+    });
+  }
+  next();
+};
 
 // Health check endpoint (no auth required)
 router.get('/health', walletController.healthCheck);
@@ -34,6 +50,7 @@ router.post('/create',
       .withMessage('Valid user ID is required')
   ],
   validateRequest,
+  enforceOwnership,
   walletController.createMultiChainWallets
 );
 
@@ -115,6 +132,7 @@ router.post('/recover',
       .withMessage('Passkey flag must be boolean')
   ],
   validateRequest,
+  enforceOwnership,
   walletController.recoverWallet
 );
 
@@ -126,6 +144,7 @@ router.get('/user/:userId',
       .withMessage('Valid user ID is required')
   ],
   validateRequest,
+  enforceOwnership,
   walletController.getUserMultiChainWallets
 );
 
@@ -162,6 +181,7 @@ router.post('/user/:userId/reconcile',
       .withMessage('Valid user ID is required')
   ],
   validateRequest,
+  enforceOwnership,
   walletController.validateAndReconcileWallets
 );
 
