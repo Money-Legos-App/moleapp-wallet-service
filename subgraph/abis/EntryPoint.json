@@ -1,0 +1,16 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "name": "userOpHash", "type": "bytes32" },
+      { "indexed": true, "name": "sender", "type": "address" },
+      { "indexed": true, "name": "paymaster", "type": "address" },
+      { "indexed": false, "name": "nonce", "type": "uint256" },
+      { "indexed": false, "name": "success", "type": "bool" },
+      { "indexed": false, "name": "actualGasCost", "type": "uint256" },
+      { "indexed": false, "name": "actualGasUsed", "type": "uint256" }
+    ],
+    "name": "UserOperationEvent",
+    "type": "event"
+  }
+]

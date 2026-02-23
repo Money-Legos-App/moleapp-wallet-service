@@ -23,6 +23,33 @@ export const agentController = {
 
       logger.info('Creating agent mission', { userId, missionType, depositAmount, walletId });
 
+      // Verify wallet belongs to the requesting user
+      const wallet = await prisma.wallet.findUnique({
+        where: { id: walletId },
+        select: { id: true, userId: true },
+      });
+
+      if (!wallet) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOT_FOUND',
+          message: 'Wallet not found',
+        });
+      }
+
+      if (wallet.userId !== userId) {
+        logger.warn('Wallet ownership mismatch', {
+          requestedBy: userId,
+          walletOwner: wallet.userId,
+          walletId,
+        });
+        return res.status(403).json({
+          success: false,
+          error: 'FORBIDDEN',
+          message: 'Wallet does not belong to this user',
+        });
+      }
+
       // Find user's existing TurnkeySigner
       const turnkeySigner = await prisma.turnkeySigner.findFirst({
         where: {
@@ -286,13 +313,17 @@ export const agentController = {
   },
 
   /**
-   * Sign agent approval transaction for Hyperliquid
+   * Sign agent approval transaction for Hyperliquid.
+   *
+   * Accepts pre-computed EIP-712 typed data from agent-service (phantom agent
+   * signing). Agent-service computes the action hash + connectionId, this
+   * endpoint just signs the resulting typed data with the user's master EOA.
    */
   signAgentApproval: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { missionId, agentAddress } = req.body;
+      const { missionId, agentAddress, typedData } = req.body;
 
-      logger.info('Signing agent approval', { missionId, agentAddress });
+      logger.info('Signing agent approval', { missionId, agentAddress, hasTypedData: !!typedData });
 
       const mission = await prisma.agentMission.findUnique({
         where: { id: missionId },
@@ -316,22 +347,19 @@ export const agentController = {
         });
       }
 
-      // Build Hyperliquid agent approval message
-      const nonce = Date.now();
-      const approvalPayload = {
-        type: 'approveAgent',
-        hyperliquidChain: process.env.HYPERLIQUID_MAINNET === 'true' ? 'Mainnet' : 'Testnet',
-        agentAddress,
-        agentName: 'MoleApp Trading Agent',
-        nonce
-      };
+      if (!typedData || !typedData.domain || !typedData.types || !typedData.message) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_REQUEST',
+          message: 'typedData with domain, types, and message is required',
+        });
+      }
 
-      const messageToSign = JSON.stringify(approvalPayload);
-
-      const signResult = await signWithTurnkey(
+      // Sign the pre-computed EIP-712 typed data using Turnkey
+      const signResult = await signTypedDataWithTurnkey(
         turnkeySigner.turnkeySubOrgId,
         turnkeySigner.turnkeyUserId,
-        messageToSign
+        typedData
       );
 
       if (!signResult.success) {
@@ -342,17 +370,11 @@ export const agentController = {
         });
       }
 
-      logger.info('Agent approval signed', { missionId });
+      logger.info('Agent approval signed (EIP-712)', { missionId });
 
       return res.json({
         success: true,
         signature: signResult.signature,
-        signedPayload: {
-          action: approvalPayload,
-          nonce,
-          signature: signResult.signature
-        },
-        nonce
       });
 
     } catch (error: any) {
@@ -476,6 +498,7 @@ export const agentController = {
       // Handle status-specific updates
       if (status === 'ACTIVE' && !metadata?.startedAt) {
         updateData.startedAt = new Date();
+        updateData.hyperliquidApproved = true;
         // Calculate end date
         const mission = await prisma.agentMission.findUnique({
           where: { id: missionId },
@@ -494,9 +517,26 @@ export const agentController = {
         updateData.completedAt = new Date();
       }
 
-      // Merge any additional metadata
+      // SECURITY: Only allow safe metadata fields — never overwrite security-critical columns
       if (metadata) {
-        Object.assign(updateData, metadata);
+        const ALLOWED_METADATA_KEYS = ['reason', 'triggeredBy', 'notes', 'externalRef', 'failureReason', 'depositUserOpHash', 'userOpStatus'];
+        const safeMetadata: Record<string, any> = {};
+        for (const key of ALLOWED_METADATA_KEYS) {
+          if (key in metadata) {
+            safeMetadata[key] = metadata[key];
+          }
+        }
+        if (Object.keys(safeMetadata).length > 0) {
+          // Merge into the JSON metadata field, not top-level columns
+          const existing = await prisma.agentMission.findUnique({
+            where: { id: missionId },
+            select: { metadata: true },
+          });
+          updateData.metadata = {
+            ...((existing?.metadata as any) || {}),
+            ...safeMetadata,
+          };
+        }
       }
 
       const mission = await prisma.agentMission.update({
@@ -591,6 +631,32 @@ export const agentController = {
           success: false,
           error: 'INVALID_TYPED_DATA',
           message: 'Missing required typed data fields (domain, types, message)'
+        });
+      }
+
+      // Validate signing domain and chainId
+      const isMainnetSign = process.env.HYPERLIQUID_MAINNET === 'true';
+      const expectedChainIdSign = isMainnetSign ? 1 : 1337;
+      const ALLOWED_DOMAINS_SIGN = ['Exchange', 'HyperliquidSignTransaction'];
+
+      if (typedData.domain.name && !ALLOWED_DOMAINS_SIGN.includes(typedData.domain.name)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_DOMAIN',
+          message: `Domain name "${typedData.domain.name}" is not in the allowlist`,
+        });
+      }
+
+      if (typedData.domain.chainId !== undefined && typedData.domain.chainId !== expectedChainIdSign) {
+        logger.warn('ChainId mismatch in signTypedData', {
+          missionId,
+          expected: expectedChainIdSign,
+          received: typedData.domain.chainId,
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'CHAIN_ID_MISMATCH',
+          message: `Expected chainId ${expectedChainIdSign}, received ${typedData.domain.chainId}`,
         });
       }
 
@@ -706,6 +772,40 @@ export const agentController = {
           success: false,
           error: 'INVALID_STATUS',
           message: `Mission is not active. Current: ${mission.status}`,
+        });
+      }
+
+      if (!mission.hyperliquidApproved) {
+        return res.status(400).json({
+          success: false,
+          error: 'NOT_APPROVED',
+          message: 'Hyperliquid agent not approved for this mission',
+        });
+      }
+
+      // Validate signing domain and chainId
+      const isMainnet = process.env.HYPERLIQUID_MAINNET === 'true';
+      const expectedChainId = isMainnet ? 1 : 1337;
+      const ALLOWED_DOMAIN_NAMES = ['Exchange', 'HyperliquidSignTransaction'];
+
+      if (typedData.domain.name && !ALLOWED_DOMAIN_NAMES.includes(typedData.domain.name)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_DOMAIN',
+          message: `Domain name "${typedData.domain.name}" is not in the allowlist`,
+        });
+      }
+
+      if (typedData.domain.chainId !== undefined && typedData.domain.chainId !== expectedChainId) {
+        logger.warn('ChainId mismatch in signing request', {
+          missionId,
+          expected: expectedChainId,
+          received: typedData.domain.chainId,
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'CHAIN_ID_MISMATCH',
+          message: `Expected chainId ${expectedChainId}, received ${typedData.domain.chainId}`,
         });
       }
 

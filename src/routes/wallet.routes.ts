@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { body, param } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import { walletController } from '../controllers/walletController.js';
 import { validateRequest } from '../middleware/validateRequest.js';
 import { authenticate, authenticateWithUserId, AuthenticatedRequest } from '../middleware/authenticate.js';
@@ -7,8 +7,24 @@ import { authenticate, authenticateWithUserId, AuthenticatedRequest } from '../m
 const router = Router();
 
 // Middleware to enforce that authenticated users can only access their own resources.
-// Service-to-service calls (client credentials with no sub claim) are allowed through.
+// Service-to-service calls (client credentials) are allowed through.
+const SERVICE_ACCOUNT_CLIENTS = new Set([
+  'user-service', 'api-gateway', 'agent-service', 'notification-service',
+  'momo-service', 'morpho-service', 'wallet-service',
+]);
+
 const enforceOwnership = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  // Allow service-to-service calls (Keycloak client_credentials tokens)
+  // These have username like "service-account-user-service" and a known clientId
+  const clientId = req.auth?.clientId;
+  const username = req.auth?.username;
+  if (clientId && SERVICE_ACCOUNT_CLIENTS.has(clientId)) {
+    return next();
+  }
+  if (username && username.startsWith('service-account-')) {
+    return next();
+  }
+
   const requestedUserId = req.params.userId || req.body?.userId;
   const authenticatedUserId = req.userId;
 
@@ -185,6 +201,26 @@ router.post('/user/:userId/reconcile',
   walletController.validateAndReconcileWallets
 );
 
+// ================================
+// WALLET EXPORT ROUTES
+// ================================
+
+// Export wallet mnemonic (seed phrase) as encrypted bundle
+router.post('/user/:userId/export/mnemonic',
+  [
+    param('userId')
+      .isUUID()
+      .withMessage('Valid user ID is required'),
+    body('targetPublicKey')
+      .isString()
+      .matches(/^04[a-fA-F0-9]{128}$/)
+      .withMessage('Valid P256 uncompressed public key is required'),
+  ],
+  validateRequest,
+  enforceOwnership,
+  walletController.exportWalletMnemonic
+);
+
 // Initialize kernel account for wallet (for legacy wallets without smart accounts)
 router.post('/:walletId/initialize-kernel',
   [
@@ -309,6 +345,33 @@ router.get('/:walletId/defi/operations',
   ],
   validateRequest,
   walletController.getDeFiBundledOperations
+);
+
+// Multi-chain transaction history (via Goldsky subgraphs)
+router.get('/user/:userId/history',
+  [
+    param('userId')
+      .notEmpty()
+      .withMessage('User ID is required'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage('Limit must be between 1 and 100'),
+    query('offset')
+      .optional()
+      .isInt({ min: 0 })
+      .withMessage('Offset must be non-negative'),
+    query('chainId')
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage('Valid chain ID is required'),
+    query('type')
+      .optional()
+      .isIn(['transfer', 'approval', 'userop'])
+      .withMessage('Type must be transfer, approval, or userop'),
+  ],
+  validateRequest,
+  walletController.getTransactionHistory
 );
 
 export default router;

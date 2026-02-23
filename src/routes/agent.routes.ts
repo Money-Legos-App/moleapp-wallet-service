@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { body, param } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import { validateRequest } from '../middleware/validateRequest.js';
 import { agentController } from '../controllers/agentController.js';
 import { createKeycloakAuth } from '../utils/keycloakAuth.js';
@@ -82,6 +83,31 @@ const serviceAuth = async (req: Request, res: Response, next: NextFunction) => {
 // Apply service auth to all routes
 router.use(serviceAuth);
 
+// Rate limiting: prevent signing floods from compromised agent-service
+const signingRateLimit = rateLimit({
+  windowMs: 60 * 1000,   // 1 minute window
+  max: 60,                // 60 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'Too many signing requests. Please slow down.',
+  },
+});
+
+const batchRateLimit = rateLimit({
+  windowMs: 60 * 1000,   // 1 minute window
+  max: 10,                // 10 batch requests per minute (up to 1000 orders)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'Too many batch signing requests.',
+  },
+});
+
 /**
  * Create a new agent mission
  * Links to user's existing TurnkeySigner - no new wallet creation
@@ -111,6 +137,7 @@ router.post('/create-mission',
  * Uses user's existing Turnkey wallet to sign the order
  */
 router.post('/sign-trade',
+  signingRateLimit,
   [
     body('missionId')
       .isUUID()
@@ -128,6 +155,7 @@ router.post('/sign-trade',
  * Efficient batch signing for processing multiple missions
  */
 router.post('/batch-sign',
+  batchRateLimit,
   [
     body('orders')
       .isArray({ min: 1, max: 100 })
@@ -240,6 +268,7 @@ router.post('/mission/:missionId/pnl-snapshot',
  * This is the correct method for proper Hyperliquid signing
  */
 router.post('/sign-typed-data',
+  signingRateLimit,
   [
     body('missionId')
       .isUUID()
@@ -266,6 +295,7 @@ router.post('/sign-typed-data',
  * Used for Phase C trading. Decrypts the mission's local agent key and signs.
  */
 router.post('/sign-with-agent-key',
+  signingRateLimit,
   [
     body('missionId')
       .isUUID()
@@ -291,6 +321,7 @@ router.post('/sign-with-agent-key',
  * Batch sign trades using per-mission agent keys (FAST PATH)
  */
 router.post('/batch-sign-with-agent-key',
+  batchRateLimit,
   [
     body('orders')
       .isArray({ min: 1, max: 100 })
@@ -310,6 +341,7 @@ router.post('/batch-sign-with-agent-key',
  * Batch sign EIP-712 typed data for multiple orders
  */
 router.post('/batch-sign-typed-data',
+  batchRateLimit,
   [
     body('orders')
       .isArray({ min: 1, max: 100 })
@@ -330,6 +362,7 @@ router.post('/batch-sign-typed-data',
  * Bundles approve + deposit into a single gasless UserOperation
  */
 router.post('/deposit-to-hyperliquid',
+  signingRateLimit,
   [
     body('missionId')
       .isUUID()
@@ -352,6 +385,7 @@ router.post('/deposit-to-hyperliquid',
  * Uses the master EOA (Turnkey) to sign the withdrawal request
  */
 router.post('/withdraw-from-hyperliquid',
+  signingRateLimit,
   [
     body('missionId')
       .isUUID()

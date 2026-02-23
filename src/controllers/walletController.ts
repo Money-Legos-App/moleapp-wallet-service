@@ -9,6 +9,7 @@ import { DeFiBundlerService } from '../services/kernel/defi-bundler.service.js';
 import { ResponseUtils } from "../utils/responseUtils"
 import { AppError } from "../utils/appError"
 import { logger } from '../utils/logger.js';
+import { getTransactionHistory } from '../services/subgraph/index.js';
 import {
   CreateWalletRequest,
   SignTransactionRequest,
@@ -33,7 +34,11 @@ export const walletController = {
       const userOpRequest: UserOperationRequest = {
         walletId: req.body.walletId,
         chainId: req.body.chainId,
-        calls: req.body.calls,
+        calls: (req.body.calls || []).map((call: any) => ({
+          to: call.to,
+          value: BigInt(call.value || '0'),
+          data: call.data || '0x',
+        })),
         sponsorUserOperation: req.body.sponsorUserOperation !== false
       };
 
@@ -668,6 +673,116 @@ export const walletController = {
         success: false,
         ...errorResponse
       });
+    }
+  },
+
+  /**
+   * Get multi-chain transaction history for a user.
+   * Queries Goldsky subgraphs and merges results across all chains.
+   *
+   * GET /api/v2/wallet/user/:userId/history?chainId=&limit=&offset=&type=
+   */
+  async getTransactionHistory(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const limit = Math.min(Number(req.query.limit) || 20, 100);
+      const offset = Number(req.query.offset) || 0;
+      const chainId = req.query.chainId ? Number(req.query.chainId) : undefined;
+      const type = req.query.type as 'transfer' | 'approval' | 'userop' | undefined;
+
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId is required' });
+      }
+
+      // Fetch user's wallets + kernel accounts to get all addresses per chain
+      const wallets = await prisma.wallet.findMany({
+        where: { userId, isActive: true },
+        include: { kernelAccounts: true },
+      });
+
+      if (!wallets.length) {
+        return ResponseUtils.success(res, { items: [], total: 0 }, 'No wallets found');
+      }
+
+      // Build list of (chainId, address) pairs
+      const addresses: { chainId: number; address: string }[] = [];
+      for (const wallet of wallets) {
+        // EOA address on each supported EVM chain
+        for (const cid of [11155111, 421614, 97]) {
+          addresses.push({ chainId: cid, address: wallet.address });
+        }
+        // Kernel (smart account) addresses
+        for (const ka of wallet.kernelAccounts) {
+          addresses.push({ chainId: ka.chainId, address: ka.address });
+        }
+      }
+
+      const result = await getTransactionHistory(addresses, {
+        limit,
+        offset,
+        chainId,
+        type,
+      });
+
+      return ResponseUtils.success(res, result, 'Transaction history fetched');
+
+    } catch (error: any) {
+      logger.error('Error fetching transaction history:', error);
+      const errorResponse: ErrorResponse = {
+        error: 'TRANSACTION_HISTORY_FAILED',
+        code: 'E020',
+        message: error.message || 'Failed to fetch transaction history'
+      };
+      res.status(500).json({
+        success: false,
+        ...errorResponse
+      });
+    }
+  },
+
+  // ================================
+  // WALLET EXPORT
+  // ================================
+
+  // Export wallet mnemonic (seed phrase) as encrypted bundle
+  async exportWalletMnemonic(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const { targetPublicKey } = req.body;
+
+      if (!userId) {
+        return ResponseUtils.error(res, 'User ID is required', 400, {
+          code: 'MISSING_USER_ID'
+        });
+      }
+
+      if (!targetPublicKey || !/^04[a-fA-F0-9]{128}$/.test(targetPublicKey)) {
+        return ResponseUtils.error(res, 'Valid P256 uncompressed public key is required', 400, {
+          code: 'INVALID_TARGET_KEY'
+        });
+      }
+
+      const result = await turnkeyService.exportWalletMnemonic(
+        userId,
+        targetPublicKey,
+        req.ip,
+        req.headers['user-agent']
+      );
+
+      logger.info(`Wallet mnemonic export bundle generated for user ${userId}`);
+      return ResponseUtils.success(res, {
+        exportBundle: result.exportBundle,
+        exportType: 'WALLET_MNEMONIC'
+      }, 'Export bundle generated successfully');
+
+    } catch (error: any) {
+      logger.error('Error exporting wallet mnemonic:', error);
+      return ResponseUtils.error(
+        res,
+        error.message || 'Failed to export wallet',
+        error.statusCode || 500,
+        { code: 'WALLET_EXPORT_FAILED' }
+      );
     }
   }
 };

@@ -5,6 +5,7 @@ import { TurnkeyEVMSignerService } from './evm-signer.service.js';
 import { TurnkeyBitcoinSignerService } from './bitcoin-signer.service.js';
 import { TurnkeySolanaSignerService } from './solana-signer.service.js';
 import { TurnkeyOrganizationService } from './organization.service.js';
+import { TurnkeyExportService } from './export.service.js';
 // WebAuthn removed - authentication handled by user-service
 import { logger } from '../../utils/logger.js';
 
@@ -20,6 +21,7 @@ export class TurnkeyService {
   private bitcoinSignerService: TurnkeyBitcoinSignerService;
   private solanaSignerService: TurnkeySolanaSignerService;
   private organizationService: TurnkeyOrganizationService;
+  private exportService: TurnkeyExportService;
 
   constructor(prisma: PrismaClient) {
     this.prisma = prisma;
@@ -28,6 +30,7 @@ export class TurnkeyService {
     this.bitcoinSignerService = new TurnkeyBitcoinSignerService(prisma);
     this.solanaSignerService = new TurnkeySolanaSignerService(prisma);
     this.organizationService = new TurnkeyOrganizationService(prisma);
+    this.exportService = new TurnkeyExportService(prisma);
 
     logger.info('TurnkeyService orchestrator initialized with chain-specific signers');
   }
@@ -172,6 +175,20 @@ export class TurnkeyService {
     logger.warn('recoverWallet called - placeholder implementation');
     // TODO: Implement based on original implementation
     return null;
+  }
+
+  // ===== Wallet Export =====
+
+  /**
+   * Export wallet mnemonic (seed phrase) as an encrypted bundle
+   */
+  async exportWalletMnemonic(
+    userId: string,
+    targetPublicKey: string,
+    ipAddress?: string,
+    userAgent?: string
+  ): Promise<{ exportBundle: string }> {
+    return this.exportService.exportWalletMnemonic(userId, targetPublicKey, ipAddress, userAgent);
   }
 
   // ===== Cache Management =====

@@ -1,0 +1,51 @@
+specVersion: 1.0.0
+indexerHints:
+  prune: auto
+schema:
+  file: ../schema.graphql
+dataSources:
+  - kind: ethereum
+    name: USDC
+    network: arbitrum-sepolia
+    source:
+      address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"
+      abi: ERC20
+      startBlock: 80000000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transfer
+        - Approval
+        - Account
+      abis:
+        - name: ERC20
+          file: ../abis/ERC20.json
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+        - event: Approval(indexed address,indexed address,uint256)
+          handler: handleApproval
+      file: ../src/erc20.ts
+  - kind: ethereum
+    name: EntryPoint
+    network: arbitrum-sepolia
+    source:
+      address: "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
+      abi: EntryPoint
+      startBlock: 80000000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - UserOperationEvent
+        - Account
+      abis:
+        - name: EntryPoint
+          file: ../abis/EntryPoint.json
+      eventHandlers:
+        - event: UserOperationEvent(indexed bytes32,indexed address,indexed address,uint256,bool,uint256,uint256)
+          handler: handleUserOperationEvent
+      file: ../src/entrypoint.ts

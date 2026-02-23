@@ -1,0 +1,56 @@
+"""
+MoleApp Subgraph Schema
+Indexes ERC-20 transfers, approvals, and ERC-4337 UserOperation events
+across Sepolia, Arbitrum Sepolia, and BSC Testnet.
+"""
+
+type Transfer @entity {
+  "txHash-logIndex"
+  id: ID!
+  from: Bytes!
+  to: Bytes!
+  value: BigInt!
+  "ERC-20 contract address"
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+  logIndex: BigInt!
+}
+
+type Approval @entity {
+  "txHash-logIndex"
+  id: ID!
+  owner: Bytes!
+  spender: Bytes!
+  value: BigInt!
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type UserOperationEvent @entity {
+  "userOpHash"
+  id: ID!
+  userOpHash: Bytes!
+  "Smart account address"
+  sender: Bytes!
+  paymaster: Bytes!
+  nonce: BigInt!
+  success: Boolean!
+  actualGasCost: BigInt!
+  actualGasUsed: BigInt!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type Account @entity {
+  "Lowercase address"
+  id: ID!
+  transferCount: BigInt!
+  userOpCount: BigInt!
+  "Block timestamp of last activity"
+  lastActivity: BigInt!
+}

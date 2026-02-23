@@ -103,8 +103,15 @@ export function createKeycloakAuth(config: KeycloakConfig): KeycloakAuthService 
         wallet_config_address: data.wallet_config_address,
         phone_number: data.phone_number,
       };
-    } catch (introspectError) {
-      // Keycloak introspection failed
+    } catch (introspectError: any) {
+      // Keycloak introspection failed — log the real error so 401s are diagnosable
+      console.error('[keycloakAuth] Token introspection failed:', {
+        message: introspectError.message,
+        code: introspectError.code,
+        status: introspectError.response?.status,
+        data: introspectError.response?.data,
+        url: `${config.baseURL}/realms/${config.realm}/protocol/openid-connect/token/introspect`,
+      });
       return { active: false };
     }
   };

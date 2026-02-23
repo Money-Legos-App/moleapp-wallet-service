@@ -223,6 +223,26 @@ export class KernelService {
 
       const networkConfig = getNetworkConfigByChainId(chainId);
 
+      // Pre-flight: check if the smart account has enough ETH for the total value
+      const totalValue = calls.reduce((sum, c) => sum + c.value, 0n);
+      if (totalValue > 0n) {
+        const publicClient = createPublicClient({
+          transport: http(networkConfig.rpcUrl),
+          chain: networkConfig.chain,
+        });
+        const balance = await publicClient.getBalance({
+          address: kernelAccount.address as Address,
+        });
+        logger.info(`Smart account ${kernelAccount.address} balance: ${balance} wei, required: ${totalValue} wei`);
+        if (balance < totalValue) {
+          throw new Error(
+            `Insufficient balance in smart account ${kernelAccount.address}. ` +
+            `Has ${balance} wei but transaction requires ${totalValue} wei. ` +
+            `Please fund the smart account first.`
+          );
+        }
+      }
+
       // Use cached kernel account client from factory
       if (!kernelAccount.turnkeySubOrgId) {
         throw new Error('Kernel account missing Turnkey sub-org ID');
@@ -259,6 +279,14 @@ export class KernelService {
 
       logger.info(`Submitted user operation ${submittedUserOpHash} for wallet ${walletId}`);
 
+      // Fire-and-forget: resolve receipt asynchronously so caller isn't blocked
+      this.resolveUserOpReceipt(clientForSubmit, submittedUserOpHash).catch((err) => {
+        logger.error('Background receipt resolution failed', {
+          userOpHash: submittedUserOpHash,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
       return {
         userOpHash: submittedUserOpHash,
         sponsored: sponsorUserOperation
@@ -266,6 +294,63 @@ export class KernelService {
 
     } catch (error) {
       logger.error('Failed to submit user operation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Resolve a UserOperation receipt asynchronously.
+   * Updates the DB row with on-chain transaction hash, block, gas, and final status.
+   */
+  private async resolveUserOpReceipt(
+    client: any,
+    userOpHash: string,
+    timeoutMs: number = 120_000
+  ): Promise<void> {
+    try {
+      const receipt = await client.waitForUserOperationReceipt({
+        hash: userOpHash,
+        timeout: timeoutMs,
+      });
+
+      const success = receipt.success === true;
+
+      await this.prisma.userOperation.update({
+        where: { userOpHash },
+        data: {
+          status: success ? 'confirmed' : 'reverted',
+          transactionHash: receipt.receipt?.transactionHash ?? null,
+          blockNumber: receipt.receipt?.blockNumber
+            ? Number(receipt.receipt.blockNumber)
+            : null,
+          gasUsed: receipt.actualGasUsed
+            ? Number(receipt.actualGasUsed)
+            : null,
+        },
+      });
+
+      logger.info('UserOp receipt resolved', {
+        userOpHash,
+        status: success ? 'confirmed' : 'reverted',
+        txHash: receipt.receipt?.transactionHash,
+      });
+    } catch (error) {
+      // Mark as failed so it doesn't stay "pending" forever
+      await this.prisma.userOperation.update({
+        where: { userOpHash },
+        data: {
+          status: 'failed',
+          metadata: {
+            receiptError: error instanceof Error ? error.message : String(error),
+          },
+        },
+      }).catch((dbErr) => {
+        logger.error('Failed to mark UserOp as failed', {
+          userOpHash,
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+        });
+      });
+
       throw error;
     }
   }

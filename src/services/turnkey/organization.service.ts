@@ -50,15 +50,32 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
       }
 
       // Create sub-organization with embedded wallet
+      // Two root users: (1) the end-user (no passkey here — wallet-service path),
+      // (2) a server-controlled "delegated" user with the parent org's API key
+      // so the backend can sign transactions (e.g., UserOps) within the sub-org.
       const subOrgConfig: TurnkeySubOrgConfig = {
         subOrganizationName: `MoleApp-User-${userId.slice(0, 8)}`,
-        rootUsers: [{
-          userName: `User-${userId.slice(0, 8)}`,
-          userEmail: userEmail || `user-${userId}@moleapp.com`,
-          apiKeys: [],
-          authenticators: [],
-          oauthProviders: []
-        }],
+        rootUsers: [
+          {
+            userName: `User-${userId.slice(0, 8)}`,
+            userEmail: userEmail || `user-${userId}@moleapp.com`,
+            apiKeys: [],
+            authenticators: [],
+            oauthProviders: []
+          },
+          {
+            // Server delegated user — allows backend to sign within this sub-org
+            userName: `server-${userId.slice(0, 8)}`,
+            userEmail: `server-${userId}@moleapp.internal`,
+            authenticators: [],
+            apiKeys: [{
+              apiKeyName: 'server-signer',
+              publicKey: env.turnkeyApiPublicKey,
+              curveType: 'API_KEY_CURVE_P256' as const,
+            }],
+            oauthProviders: []
+          },
+        ],
         wallet: {
           walletName: 'Primary Wallet',
           accounts: [

@@ -97,7 +97,9 @@ export interface EnvironmentConfig {
   useRealBlockchain: boolean;
   sendSwapNotifications: boolean;
   simulateWalletBalances: boolean;
-  
+  useTurnkeyViemSigner: boolean;
+  enableWalletExport: boolean;
+
   // Test configuration
   testWalletPrivateKey?: string;
   testWalletAddress?: string;
@@ -183,6 +185,8 @@ const validateEnvironment = (): EnvironmentConfig => {
     useRealBlockchain: getEnvBool('USE_REAL_BLOCKCHAIN', false),
     sendSwapNotifications: getEnvBool('SEND_SWAP_NOTIFICATIONS', false),
     simulateWalletBalances: getEnvBool('SIMULATE_WALLET_BALANCES', false),
+    useTurnkeyViemSigner: getEnvBool('USE_TURNKEY_VIEM_SIGNER', true),
+    enableWalletExport: getEnvBool('ENABLE_WALLET_EXPORT', false),
 
     // Test configuration (prefixed)
     testWalletPrivateKey: getEnvVar('TEST_WALLET_PRIVATE_KEY') || undefined,

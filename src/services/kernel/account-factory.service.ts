@@ -4,7 +4,9 @@ import { KERNEL_V3_1, getEntryPoint } from '@zerodev/sdk/constants';
 import { Address, Chain, createPublicClient, Hex, http } from 'viem';
 import { PrismaClient } from '../../lib/prisma';
 import { getUserOperationGasPrice } from 'permissionless/actions/pimlico';
+import { createPimlicoClient } from 'permissionless/clients/pimlico';
 import { getNetworkConfigByChainId } from '../../config/networks.js';
+import { env } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 import { TurnkeyEVMSignerService } from '../turnkey/evm-signer.service.js';
 
@@ -45,6 +47,25 @@ export class KernelAccountFactory {
 
     try {
       logger.info(`Creating kernel account for user ${userId} on chain ${chainId}`);
+
+      // Check for legacy kernel accounts (signerVersion=0) that used SHA256-derived keys.
+      // Counterfactual (not deployed) legacy accounts are safe to delete and re-create
+      // with the correct Turnkey-backed signer.
+      const existingLegacy = await this.prisma.kernelAccount.findFirst({
+        where: { walletId, chainId }
+      });
+
+      if (existingLegacy && existingLegacy.signerVersion === 0) {
+        if (!existingLegacy.isDeployed) {
+          logger.warn(`Replacing legacy SHA256 kernel account ${existingLegacy.address} with Turnkey-backed account for wallet ${walletId} chain ${chainId}`);
+          await this.prisma.kernelAccount.delete({ where: { id: existingLegacy.id } });
+          // Clear cache for this key so it gets re-created
+          this.accountCache.delete(cacheKey);
+        } else {
+          logger.error(`Deployed legacy kernel account ${existingLegacy.address} requires ownership transfer migration (wallet ${walletId}, chain ${chainId})`);
+          throw new Error('Legacy deployed kernel account requires migration. Contact support.');
+        }
+      }
 
       const networkConfig = getNetworkConfigByChainId(chainId);
 
@@ -152,12 +173,62 @@ export class KernelAccountFactory {
         kernelVersion,
       });
 
-      // Create Kernel account client with Pimlico-compatible gas estimation
+      // Migrate legacy kernel accounts: if DB has a signerVersion=0 record
+      // with a different address (computed with old SHA256-derived signer),
+      // update it to the correct Turnkey-backed counterfactual address.
+      const legacyAccount = await this.prisma.kernelAccount.findFirst({
+        where: { turnkeySubOrgId, chainId, signerVersion: 0 },
+      });
+      if (legacyAccount && legacyAccount.address !== kernelAccount.address) {
+        if (!legacyAccount.isDeployed) {
+          logger.warn(
+            `Migrating legacy kernel account ${legacyAccount.address} → ${kernelAccount.address} ` +
+            `(sub-org ${turnkeySubOrgId}, chain ${chainId})`
+          );
+          await this.prisma.kernelAccount.update({
+            where: { id: legacyAccount.id },
+            data: { address: kernelAccount.address, signerVersion: 1 },
+          });
+          // Also update the parent wallet address to match
+          await this.prisma.wallet.update({
+            where: { id: legacyAccount.walletId },
+            data: { address: kernelAccount.address },
+          });
+        } else {
+          logger.error(
+            `Deployed legacy kernel account ${legacyAccount.address} cannot be auto-migrated ` +
+            `(sub-org ${turnkeySubOrgId}, chain ${chainId}). Requires ownership transfer.`
+          );
+        }
+      }
+
+      // Create Pimlico paymaster client for controlled gas sponsorship
+      const pimlicoClient = createPimlicoClient({
+        chain: networkConfig.chain,
+        transport: http(networkConfig.bundlerUrl!),
+        entryPoint,
+      });
+
+      // Build sponsorship context: when a policy is configured, pass it via
+      // paymasterContext so viem forwards it in pm_getPaymasterData RPC calls.
+      const sponsorshipPolicyId = env.pimlicoSponsorshipPolicyId || undefined;
+      if (!sponsorshipPolicyId) {
+        logger.warn('No PIMLICO_SPONSORSHIP_POLICY_ID configured — UserOps will be sponsored unconditionally');
+      }
+
+      const paymasterContext = sponsorshipPolicyId
+        ? { sponsorshipPolicyId }
+        : undefined;
+
+      // Create Kernel account client with Pimlico-compatible gas estimation.
+      // Pass pimlicoClient directly — it already exposes the correct
+      // getPaymasterData / getPaymasterStubData methods for EP v0.7.
       const smartAccountClient = createKernelAccountClient({
         account: kernelAccount,
         chain: networkConfig.chain,
         bundlerTransport: http(networkConfig.bundlerUrl!),
-        paymaster: true,
+        paymaster: pimlicoClient,
+        paymasterContext,
         userOperation: {
           // Use Pimlico's gas price method instead of ZeroDev's zd_getUserOperationGasPrice
           estimateFeesPerGas: async ({ bundlerClient }) => {
@@ -225,6 +296,7 @@ export class KernelAccountFactory {
           data: {
             address: accountAddress,
             isDeployed,
+            signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
             updatedAt: new Date()
           }
         });
@@ -240,7 +312,8 @@ export class KernelAccountFactory {
             ownerAddress,
             chainId,
             turnkeySubOrgId,
-            isDeployed
+            isDeployed,
+            signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
           }
         });
         logger.info(`Created new kernel account ${accountAddress} for wallet ${walletId} on chain ${chainId}`);

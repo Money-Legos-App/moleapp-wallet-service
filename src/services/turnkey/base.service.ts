@@ -1,6 +1,6 @@
 import { TurnkeyClient } from '@turnkey/http';
 import { ApiKeyStamper } from '@turnkey/api-key-stamper';
-import { Turnkey } from '@turnkey/sdk-server';
+import { Turnkey, TurnkeyServerClient } from '@turnkey/sdk-server';
 import { env } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 
@@ -11,6 +11,7 @@ import { logger } from '../../utils/logger.js';
 export class TurnkeyBaseService {
   protected client: TurnkeyClient;
   protected sdkServer: Turnkey;
+  protected serverClient: TurnkeyServerClient;
 
   constructor() {
     const stamper = new ApiKeyStamper({
@@ -31,14 +32,25 @@ export class TurnkeyBaseService {
       apiPrivateKey: env.turnkeyApiPrivateKey,
     });
 
+    // TurnkeyServerClient compatible with @turnkey/viem createAccount()
+    // Use sdkServer.apiClient() so parent-org API keys can sign for sub-orgs
+    this.serverClient = this.sdkServer.apiClient();
+
     logger.info('TurnkeyBaseService initialized');
   }
 
   /**
-   * Get the raw Turnkey client for advanced operations
+   * Get the raw Turnkey client for advanced operations (subclass use)
    */
   protected getTurnkeyClient(): TurnkeyClient {
     return this.client;
+  }
+
+  /**
+   * Get the TurnkeyServerClient for use with @turnkey/viem createAccount()
+   */
+  public getServerClient(): TurnkeyServerClient {
+    return this.serverClient;
   }
 
   /**

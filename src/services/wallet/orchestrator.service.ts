@@ -563,6 +563,7 @@ export class WalletOrchestrator {
         return {
           walletId: wallet.id,
           address: wallet.address,
+          ownerAddress: wallet.ownerAddress, // EOA address from Turnkey
           chainId: wallet.chainId,
           network: networkConfig ? {
             name: networkConfig.name,

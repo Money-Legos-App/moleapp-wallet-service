@@ -1,0 +1,22 @@
+{
+  "name": "moleapp-subgraph",
+  "version": "1.0.0",
+  "description": "Goldsky subgraph for MoleApp multi-chain transaction indexing",
+  "scripts": {
+    "codegen:sepolia": "graph codegen networks/sepolia.yaml",
+    "codegen:arb-sepolia": "graph codegen networks/arbitrum-sepolia.yaml",
+    "codegen:chapel": "graph codegen networks/chapel.yaml",
+    "build:sepolia": "graph codegen networks/sepolia.yaml && graph build networks/sepolia.yaml",
+    "build:arb-sepolia": "graph codegen networks/arbitrum-sepolia.yaml && graph build networks/arbitrum-sepolia.yaml",
+    "build:chapel": "graph codegen networks/chapel.yaml && graph build networks/chapel.yaml",
+    "build:all": "npm run build:sepolia && npm run build:arb-sepolia && npm run build:chapel",
+    "deploy:sepolia": "goldsky subgraph deploy moleapp-sepolia/1.0.0 --path . --network-file networks/sepolia.yaml",
+    "deploy:arb-sepolia": "goldsky subgraph deploy moleapp-arb-sepolia/1.0.0 --path . --network-file networks/arbitrum-sepolia.yaml",
+    "deploy:chapel": "goldsky subgraph deploy moleapp-chapel/1.0.0 --path . --network-file networks/chapel.yaml",
+    "deploy:all": "npm run deploy:sepolia && npm run deploy:arb-sepolia && npm run deploy:chapel"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli": "^0.71.0",
+    "@graphprotocol/graph-ts": "^0.35.0"
+  }
+}

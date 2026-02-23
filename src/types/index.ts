@@ -109,7 +109,7 @@ export interface TurnkeySubOrgConfig {
     apiKeys: {
       apiKeyName: string;
       publicKey: string;
-      curveType: 'API_KEY_CURVE_SECP256K1' | 'API_KEY_CURVE_ED25519';
+      curveType: 'API_KEY_CURVE_SECP256K1' | 'API_KEY_CURVE_ED25519' | 'API_KEY_CURVE_P256';
     }[];
     authenticators: any[];
     oauthProviders: any[];
