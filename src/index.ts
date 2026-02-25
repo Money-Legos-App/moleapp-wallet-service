@@ -45,11 +45,19 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('combined', { stream: morganStream }));
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
+app.get('/health', async (req, res) => {
+  let dbOk = false;
+  try {
+    await prisma.$queryRawUnsafe('SELECT 1');
+    dbOk = true;
+  } catch {}
+
+  const status = dbOk ? 'healthy' : 'degraded';
+  res.status(dbOk ? 200 : 503).json({
     service: 'wallet-service',
     version: '2.0.0',
-    status: 'healthy',
+    status,
+    database: dbOk ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString(),
     environment: env.nodeEnv
   });

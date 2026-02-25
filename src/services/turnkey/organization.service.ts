@@ -58,7 +58,7 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
         rootUsers: [
           {
             userName: `User-${userId.slice(0, 8)}`,
-            userEmail: userEmail || `user-${userId}@moleapp.com`,
+            userEmail: userEmail || `user-${userId}@moleapp.africa`,
             apiKeys: [],
             authenticators: [],
             oauthProviders: []
