@@ -72,14 +72,15 @@ export interface EnvironmentConfig {
   pimlicoBaseUrl: string;
   pimlicoSponsorshipPolicyId: string;
   
-  // Network RPC URLs
-  sepoliaRpcUrl: string;
-  bscTestnetRpcUrl: string;
-  polygonAmoyRpcUrl: string;
-  arbitrumSepoliaRpcUrl: string;
-  
+  // Network RPC URLs (resolved per environment)
+  ethRpcUrl: string;
+  bscRpcUrl: string;
+  polygonRpcUrl: string;
+  arbitrumRpcUrl: string;
+  baseRpcUrl: string;
+
   // 0x API configuration
-  zeroxBaseUrlSepolia: string;
+  zeroxBaseUrl: string;
   zeroxApiKey: string;
   
   // Session Key configuration
@@ -120,7 +121,7 @@ const validateEnvironment = (): EnvironmentConfig => {
     'PIMLICO_API_KEY',
     'PHONE_HASH_SALT',
     'KEYCLOAK_CLIENT_SECRET',
-    'SEPOLIA_RPC_URL'
+    'ETH_RPC_URL'
   ];
 
   for (const envVar of requiredEnvVars) {
@@ -160,14 +161,15 @@ const validateEnvironment = (): EnvironmentConfig => {
     pimlicoBaseUrl: process.env.PIMLICO_BASE_URL || 'https://api.pimlico.io/v2',
     pimlicoSponsorshipPolicyId: getEnvVar('PIMLICO_SPONSORSHIP_POLICY_ID'),
 
-    // Network RPC URLs (prefixed) — must be set via env vars for production
-    sepoliaRpcUrl: getEnvVar('SEPOLIA_RPC_URL'),
-    bscTestnetRpcUrl: getEnvVar('BSC_TESTNET_RPC_URL', 'https://data-seed-prebsc-1-s1.bnbchain.org:8545'),
-    polygonAmoyRpcUrl: getEnvVar('POLYGON_AMOY_RPC_URL', 'https://rpc-amoy.polygon.technology'),
-    arbitrumSepoliaRpcUrl: getEnvVar('ARBITRUM_SEPOLIA_RPC_URL', 'https://sepolia-rollup.arbitrum.io/rpc'),
+    // Network RPC URLs (prefixed) — resolved per environment
+    ethRpcUrl: getEnvVar('ETH_RPC_URL'),
+    bscRpcUrl: getEnvVar('BSC_RPC_URL', ''),
+    polygonRpcUrl: getEnvVar('POLYGON_RPC_URL', ''),
+    arbitrumRpcUrl: getEnvVar('ARBITRUM_RPC_URL', isDevelopmentMode ? 'https://sepolia-rollup.arbitrum.io/rpc' : 'https://arb1.arbitrum.io/rpc'),
+    baseRpcUrl: getEnvVar('BASE_RPC_URL', isDevelopmentMode ? '' : 'https://mainnet.base.org'),
 
     // 0x API configuration (prefixed)
-    zeroxBaseUrlSepolia: getEnvVar('ZEROX_BASE_URL_SEPOLIA', 'https://sepolia.api.0x.org'),
+    zeroxBaseUrl: getEnvVar('ZEROX_BASE_URL', isDevelopmentMode ? 'https://sepolia.api.0x.org' : 'https://api.0x.org'),
     zeroxApiKey: getEnvVar('ZEROX_API_KEY'),
 
     // Session Key configuration (shared - no prefix)

@@ -1,4 +1,5 @@
-import { Chain, sepolia, arbitrumSepolia } from 'viem/chains';
+import { Chain, sepolia, arbitrumSepolia, mainnet, arbitrum, base } from 'viem/chains';
+import { developmentMode } from './environment.js';
 
 export interface NetworkConfig {
   chainId: number | null; // null for non-EVM chains
@@ -36,12 +37,29 @@ export const bscTestnet = {
   },
 } as const;
 
-export const NETWORKS: Record<string, NetworkConfig> = {
+// BSC Mainnet configuration
+export const bscMainnet = {
+  id: 56,
+  name: 'BNB Smart Chain',
+  network: 'bsc',
+  nativeCurrency: { decimals: 18, name: 'BNB', symbol: 'BNB' },
+  rpcUrls: {
+    public: { http: ['https://bsc-dataseed.binance.org/'] },
+    default: { http: ['https://bsc-dataseed.binance.org/'] },
+  },
+  blockExplorers: {
+    etherscan: { name: 'BscScan', url: 'https://bscscan.com' },
+    default: { name: 'BscScan', url: 'https://bscscan.com' },
+  },
+} as const;
+
+// Testnet network configurations
+const TESTNET_NETWORKS: Record<string, NetworkConfig> = {
   // Ethereum Sepolia
   'ETH_SEPOLIA': {
     chainId: 11155111,
     name: 'Ethereum Sepolia',
-    rpcUrl: process.env.SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/lUkI7uYQQMITyFFDcP6KrEzBxA4j4Hl9',
+    rpcUrl: process.env.ETH_TESTNET_RPC_URL || process.env.SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/lUkI7uYQQMITyFFDcP6KrEzBxA4j4Hl9',
     entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
     paymasterUrl: `https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}`,
     bundlerUrl: `https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.PIMLICO_API_KEY}`,
@@ -53,13 +71,12 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     addressFormat: 'ETHEREUM',
     curve: 'SECP256K1'
   },
-  
 
   // Arbitrum Sepolia (for Hyperliquid bridge deposits/withdrawals)
   'ARBITRUM_SEPOLIA': {
     chainId: 421614,
     name: 'Arbitrum Sepolia',
-    rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
+    rpcUrl: process.env.ARBITRUM_TESTNET_RPC_URL || process.env.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
     entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
     paymasterUrl: `https://api.pimlico.io/v2/421614/rpc?apikey=${process.env.PIMLICO_API_KEY}`,
     bundlerUrl: `https://api.pimlico.io/v2/421614/rpc?apikey=${process.env.PIMLICO_API_KEY}`,
@@ -115,6 +132,61 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     curve: 'SECP256K1'
   }
 };
+
+// Mainnet network configurations
+const MAINNET_NETWORKS: Record<string, NetworkConfig> = {
+  'ETH_MAINNET': {
+    chainId: 1,
+    name: 'Ethereum',
+    rpcUrl: process.env.PROD_ETH_RPC_URL || process.env.ETH_RPC_URL || 'https://eth.llamarpc.com',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/1/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/1/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://etherscan.io',
+    currencySymbol: 'ETH',
+    isTestnet: false,
+    chain: mainnet,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+  'ARBITRUM_ONE': {
+    chainId: 42161,
+    name: 'Arbitrum One',
+    rpcUrl: process.env.PROD_ARBITRUM_RPC_URL || process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/42161/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/42161/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://arbiscan.io',
+    currencySymbol: 'ETH',
+    isTestnet: false,
+    chain: arbitrum,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+  'BASE': {
+    chainId: 8453,
+    name: 'Base',
+    rpcUrl: process.env.PROD_BASE_RPC_URL || process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/8453/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/8453/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://basescan.org',
+    currencySymbol: 'ETH',
+    isTestnet: false,
+    chain: base,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+};
+
+// Active networks based on environment
+export const NETWORKS: Record<string, NetworkConfig> = developmentMode ? TESTNET_NETWORKS : MAINNET_NETWORKS;
+
+// Default EVM chain ID based on environment
+export const DEFAULT_EVM_CHAIN_ID = developmentMode ? 11155111 : 42161;
 
 export const getSupportedChainKeys = (): string[] => {
   return Object.keys(NETWORKS);

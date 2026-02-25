@@ -135,7 +135,7 @@ export type CurveType = 'SECP256K1' | 'ED25519';
 export type AddressFormat = 'ETHEREUM' | 'SOLANA' | 'BITCOIN' | 'COSMOS';
 
 // Supported Chain Keys
-export type EVMChainKey = 'ETH_SEPOLIA' | 'POLYGON_AMOY' | 'BNB_TESTNET';
+export type EVMChainKey = 'ETH_SEPOLIA' | 'ARBITRUM_SEPOLIA' | 'BNB_TESTNET' | 'POLYGON_AMOY' | 'ETH_MAINNET' | 'ARBITRUM_ONE' | 'BASE';
 export type BitcoinChainKey = 'BITCOIN_TESTNET';
 export type SolanaChainKey = 'SOLANA_DEVNET';
 export type SupportedChainKey = EVMChainKey | BitcoinChainKey | SolanaChainKey;

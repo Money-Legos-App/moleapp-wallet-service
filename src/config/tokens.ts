@@ -1,9 +1,11 @@
 /**
  * Token Configuration for Gasless Swaps
- * Sepolia Testnet tokens supported for 0x API swaps
+ * Supports both testnet and mainnet tokens based on DEVELOPMENT_MODE
  */
 
 import type { Address } from 'viem';
+import { developmentMode } from './environment.js';
+import { DEFAULT_EVM_CHAIN_ID } from './networks.js';
 
 export interface TokenConfig {
   symbol: string;
@@ -18,7 +20,7 @@ export interface TokenConfig {
  * Supported tokens on Sepolia testnet
  * Native ETH uses 0x API's special address representation
  */
-export const SEPOLIA_TOKENS: Record<string, TokenConfig> = {
+export const TESTNET_TOKENS: Record<string, TokenConfig> = {
   ETH: {
     symbol: 'ETH',
     name: 'Ethereum',
@@ -70,6 +72,58 @@ export const SEPOLIA_TOKENS: Record<string, TokenConfig> = {
 } as const;
 
 /**
+ * Supported tokens on Arbitrum One mainnet (primary production chain)
+ */
+export const MAINNET_TOKENS: Record<string, TokenConfig> = {
+  ETH: {
+    symbol: 'ETH',
+    name: 'Ethereum',
+    address: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' as Address,
+    decimals: 18,
+    isNative: true,
+    coingeckoId: 'ethereum',
+  },
+  WETH: {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1' as Address, // Arbitrum One WETH
+    decimals: 18,
+    isNative: false,
+    coingeckoId: 'weth',
+  },
+  USDC: {
+    symbol: 'USDC',
+    name: 'USD Coin',
+    address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address, // Arbitrum native USDC
+    decimals: 6,
+    isNative: false,
+    coingeckoId: 'usd-coin',
+  },
+  USDT: {
+    symbol: 'USDT',
+    name: 'Tether USD',
+    address: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9' as Address, // Arbitrum USDT
+    decimals: 6,
+    isNative: false,
+    coingeckoId: 'tether',
+  },
+  DAI: {
+    symbol: 'DAI',
+    name: 'Dai Stablecoin',
+    address: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1' as Address, // Arbitrum DAI
+    decimals: 18,
+    isNative: false,
+    coingeckoId: 'dai',
+  },
+} as const;
+
+// Backward-compat alias
+export const SEPOLIA_TOKENS = TESTNET_TOKENS;
+
+// Active tokens based on environment
+export const TOKENS: Record<string, TokenConfig> = developmentMode ? TESTNET_TOKENS : MAINNET_TOKENS;
+
+/**
  * Swap configuration constants
  */
 export const SWAP_CONFIG = {
@@ -79,10 +133,10 @@ export const SWAP_CONFIG = {
   MAX_SLIPPAGE_BPS: 500,
   /** Quote validity period in milliseconds (30 seconds) */
   QUOTE_EXPIRY_MS: 30000,
-  /** Sepolia chain ID */
-  CHAIN_ID: 11155111,
-  /** 0x API base URL for Sepolia */
-  ZEROX_BASE_URL: 'https://sepolia.api.0x.org',
+  /** Chain ID for swap operations */
+  CHAIN_ID: DEFAULT_EVM_CHAIN_ID,
+  /** 0x API base URL */
+  ZEROX_BASE_URL: developmentMode ? 'https://sepolia.api.0x.org' : 'https://api.0x.org',
 } as const;
 
 /**
@@ -93,12 +147,12 @@ export const SWAP_CONFIG = {
 export function resolveToken(tokenIdentifier: string): TokenConfig | null {
   // Check if it's a symbol (case-insensitive)
   const symbolUpper = tokenIdentifier.toUpperCase();
-  if (symbolUpper in SEPOLIA_TOKENS) {
-    return SEPOLIA_TOKENS[symbolUpper];
+  if (symbolUpper in TOKENS) {
+    return TOKENS[symbolUpper];
   }
 
   // Check if it's an address (case-insensitive)
-  const tokenByAddress = Object.values(SEPOLIA_TOKENS).find(
+  const tokenByAddress = Object.values(TOKENS).find(
     (t) => t.address.toLowerCase() === tokenIdentifier.toLowerCase()
   );
 
@@ -109,7 +163,7 @@ export function resolveToken(tokenIdentifier: string): TokenConfig | null {
  * Get all supported token symbols
  */
 export function getSupportedTokenSymbols(): string[] {
-  return Object.keys(SEPOLIA_TOKENS);
+  return Object.keys(TOKENS);
 }
 
 /**
@@ -129,7 +183,7 @@ export function getTokenListForApi(): Array<{
   decimals: number;
   isNative: boolean;
 }> {
-  return Object.values(SEPOLIA_TOKENS).map((token) => ({
+  return Object.values(TOKENS).map((token) => ({
     symbol: token.symbol,
     name: token.name,
     address: token.address,

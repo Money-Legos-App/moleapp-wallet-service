@@ -1,11 +1,11 @@
 /**
  * 0x API Client Service
  * Handles communication with 0x Swap API for quotes and pricing
- * Configured for Sepolia testnet
+ * Chain configured via SWAP_CONFIG (auto-switches dev/prod)
  */
 
 import { logger } from '../../utils/logger.js';
-import { env } from '../../config/environment.js';
+import { env, developmentMode } from '../../config/environment.js';
 import { SWAP_CONFIG } from '../../config/tokens.js';
 import type {
   ZeroXQuoteParams,
@@ -76,14 +76,13 @@ export class ZeroXClientService {
 
         // Check for no liquidity or route errors (common on testnets)
         if (response.status === 400 && errorBody.includes('INSUFFICIENT_ASSET_LIQUIDITY')) {
-          throw new Error('NO_LIQUIDITY: No swap routes available on Sepolia testnet');
+          throw new Error('NO_LIQUIDITY: No swap routes available for this chain');
         }
 
-        // Check for 404 "no Route matched" error (testnet limitation)
+        // Check for 404 "no Route matched" error (common on testnets)
         if (response.status === 404 && errorBody.includes('no Route matched')) {
-          const isTestnet = params.chainId === 11155111; // Sepolia
-          const message = isTestnet
-            ? 'NO_LIQUIDITY: Sepolia testnet has very limited DEX liquidity. Most token pairs are not available for swapping. Consider using mainnet or a testnet with better liquidity support.'
+          const message = developmentMode
+            ? 'NO_LIQUIDITY: Testnet has very limited DEX liquidity. Most token pairs are not available for swapping.'
             : 'NO_ROUTE: No swap route found for this token pair';
           throw new Error(message);
         }
@@ -166,14 +165,13 @@ export class ZeroXClientService {
 
         // Check for no liquidity or route errors (common on testnets)
         if (response.status === 400 && errorBody.includes('INSUFFICIENT_ASSET_LIQUIDITY')) {
-          throw new Error('NO_LIQUIDITY: No swap routes available on Sepolia testnet');
+          throw new Error('NO_LIQUIDITY: No swap routes available for this chain');
         }
 
-        // Check for 404 "no Route matched" error (testnet limitation)
+        // Check for 404 "no Route matched" error (common on testnets)
         if (response.status === 404 && errorBody.includes('no Route matched')) {
-          const isTestnet = params.chainId === 11155111; // Sepolia
-          const message = isTestnet
-            ? 'NO_LIQUIDITY: Sepolia testnet has very limited DEX liquidity. Most token pairs are not available for swapping. Consider using mainnet or a testnet with better liquidity support.'
+          const message = developmentMode
+            ? 'NO_LIQUIDITY: Testnet has very limited DEX liquidity. Most token pairs are not available for swapping.'
             : 'NO_ROUTE: No swap route found for this token pair';
           throw new Error(message);
         }

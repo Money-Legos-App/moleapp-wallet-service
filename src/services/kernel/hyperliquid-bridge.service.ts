@@ -2,12 +2,13 @@ import { Address, Hex, encodeFunctionData, parseAbi } from 'viem';
 import { PrismaClient } from '../../lib/prisma';
 import { logger } from '../../utils/logger.js';
 import { KernelService } from './account-abstraction.service.js';
+import { developmentMode } from '../../config/environment.js';
 
 /**
  * Hyperliquid Bridge Service
  *
  * Handles USDC deposits and withdrawals to/from the Hyperliquid bridge
- * on Arbitrum Sepolia using Account Abstraction (gasless UserOperations).
+ * on Arbitrum using Account Abstraction (gasless UserOperations).
  *
  * Capital Flow:
  *   Deposit:  User's Kernel Smart Wallet → USDC.approve → HLBridge.deposit
@@ -28,9 +29,15 @@ export class HyperliquidBridgeService {
     this.prisma = prisma;
     this.kernelService = kernelService;
 
-    this.hlBridgeAddress = (process.env.HL_BRIDGE_ADDRESS || '0x0000000000000000000000000000000000000000') as Address;
-    this.usdcAddress = (process.env.USDC_ADDRESS_ARBITRUM_SEPOLIA || '0x0000000000000000000000000000000000000000') as Address;
-    this.chainId = 421614; // Arbitrum Sepolia
+    this.hlBridgeAddress = (process.env.HL_BRIDGE_ADDRESS || (developmentMode
+      ? '0x08cfc1B6b2dCF36A1480b99353A354AA8AC56f89'   // Arbitrum Sepolia testnet bridge
+      : '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7'   // Arbitrum One mainnet bridge
+    )) as Address;
+    this.usdcAddress = (process.env.USDC_ADDRESS_ARBITRUM || (developmentMode
+      ? '0x1baAbB04529D43a73232B713C0FE471f7c7334d5'   // Arbitrum Sepolia testnet USDC
+      : '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'   // Arbitrum One native USDC
+    )) as Address;
+    this.chainId = parseInt(process.env.HL_BRIDGE_CHAIN_ID || '0') || (developmentMode ? 421614 : 42161);
   }
 
   /**

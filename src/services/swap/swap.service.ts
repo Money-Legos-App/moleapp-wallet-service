@@ -26,11 +26,12 @@ import { UniswapV3ClientService } from './uniswap-v3-client.service.js';
 import { UniswapV2ClientService } from './uniswap-v2-client.service.js';
 import redis from '../../config/redis.js';
 import {
-  SEPOLIA_TOKENS,
+  TOKENS,
   SWAP_CONFIG,
   resolveToken,
   type TokenConfig,
 } from '../../config/tokens.js';
+import { developmentMode } from '../../config/environment.js';
 import { UNISWAP_V2_CONFIG } from '../../config/uniswap-v2.config.js';
 import type {
   SwapQuoteRequest,
@@ -233,7 +234,7 @@ export class SwapService {
         });
       } catch (error: any) {
         // If 0x fails with NO_LIQUIDITY on testnet, try Uniswap V3
-        if (error.message?.includes('NO_LIQUIDITY') && SWAP_CONFIG.CHAIN_ID === 11155111) {
+        if (error.message?.includes('NO_LIQUIDITY') && developmentMode) {
           logger.warn('0x API failed, trying Uniswap V3 fallback...', {
             error: error.message,
           });
@@ -276,9 +277,10 @@ export class SwapService {
 
             // Re-throw with the most informative error message
             throw new Error(
-              `INSUFFICIENT_LIQUIDITY: The ${sellTokenConfig.symbol}/${buyTokenConfig.symbol} pair is not available on Sepolia testnet. ` +
-              `Sepolia has very limited DEX liquidity and most token pairs cannot be swapped. ` +
-              `For testing swap functionality, please use mainnet or consider using a mock swap mode.`
+              `INSUFFICIENT_LIQUIDITY: The ${sellTokenConfig.symbol}/${buyTokenConfig.symbol} pair has insufficient liquidity. ` +
+              (developmentMode
+                ? `Testnet has very limited DEX liquidity and most token pairs cannot be swapped.`
+                : `No swap route found for this pair.`)
             );
           }
         } else {
@@ -803,7 +805,7 @@ export class SwapService {
     decimals: number;
     isNative: boolean;
   }> {
-    return Object.values(SEPOLIA_TOKENS).map((token) => ({
+    return Object.values(TOKENS).map((token) => ({
       symbol: token.symbol,
       name: token.name,
       address: token.address,

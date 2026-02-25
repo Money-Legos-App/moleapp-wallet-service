@@ -4,6 +4,7 @@ import { BitcoinService } from './secp256k1/bitcoin/service.js';
 import { SolanaService } from './ed25519/solana/service.js';
 import { KernelService } from '../services/kernel/account-abstraction.service.js';
 import { logger } from '../utils/logger.js';
+import { developmentMode } from '../config/environment.js';
 import {
   ChainService,
   EVMChainService,
@@ -134,7 +135,9 @@ export class ChainServiceFactory {
   getChainsByCurve(curve: 'SECP256K1' | 'ED25519'): SupportedChainKey[] {
     switch (curve) {
       case 'SECP256K1':
-        return ['ETH_SEPOLIA', 'POLYGON_AMOY', 'BNB_TESTNET', 'BITCOIN_TESTNET'];
+        return developmentMode
+          ? ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA', 'BNB_TESTNET', 'BITCOIN_TESTNET']
+          : ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BITCOIN_TESTNET'];
 
       case 'ED25519':
         return ['SOLANA_DEVNET'];
@@ -155,7 +158,9 @@ export class ChainServiceFactory {
    * Check if chain is EVM-compatible
    */
   private isEVMChain(chainKey: string): boolean {
-    const evmChains: EVMChainKey[] = ['ETH_SEPOLIA', 'POLYGON_AMOY', 'BNB_TESTNET'];
+    const evmChains: EVMChainKey[] = developmentMode
+      ? ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA', 'BNB_TESTNET']
+      : ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE'];
     return evmChains.includes(chainKey as EVMChainKey);
   }
 

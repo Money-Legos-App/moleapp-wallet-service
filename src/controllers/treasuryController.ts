@@ -10,6 +10,7 @@ import { validationResult } from 'express-validator';
 import { treasuryService } from '../services/treasury';
 import { logger } from '../utils/logger';
 import { Address, Hex } from 'viem';
+import { getSupportedChainIds, DEFAULT_EVM_CHAIN_ID } from '../config/networks.js';
 
 // Response helpers
 const successResponse = (res: Response, data: any, message: string = 'Success', statusCode: number = 200) => {
@@ -43,7 +44,7 @@ export class TreasuryController {
       }
 
       const { userId, walletAddress, usdcAmount, transactionId, metadata } = req.body;
-      const chainId = parseInt(req.body.chainId || '11155111', 10); // Default to Sepolia
+      const chainId = parseInt(req.body.chainId, 10) || DEFAULT_EVM_CHAIN_ID; // Default to Sepolia
 
       logger.info('Treasury credit request', {
         userId,
@@ -93,7 +94,7 @@ export class TreasuryController {
       }
 
       const { userId, walletAddress, usdcAmount, transactionId, metadata } = req.body;
-      const chainId = parseInt(req.body.chainId || '11155111', 10);
+      const chainId = parseInt(req.body.chainId, 10) || DEFAULT_EVM_CHAIN_ID;
 
       logger.info('Treasury lock request', {
         userId,
@@ -143,7 +144,7 @@ export class TreasuryController {
       }
 
       const { userId, walletAddress, usdcAmount, transactionId, reason, metadata } = req.body;
-      const chainId = parseInt(req.body.chainId || '11155111', 10);
+      const chainId = parseInt(req.body.chainId, 10) || DEFAULT_EVM_CHAIN_ID;
 
       logger.info('Treasury refund request', {
         userId,
@@ -190,7 +191,7 @@ export class TreasuryController {
    */
   async getBalance(req: Request, res: Response): Promise<Response> {
     try {
-      const chainId = parseInt(req.query.chainId as string || '11155111', 10);
+      const chainId = parseInt(req.query.chainId as string, 10) || DEFAULT_EVM_CHAIN_ID;
 
       logger.info('Treasury balance request', { chainId });
 
@@ -214,7 +215,7 @@ export class TreasuryController {
   async getTransactionStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { txHash } = req.params;
-      const chainId = parseInt(req.query.chainId as string || '11155111', 10);
+      const chainId = parseInt(req.query.chainId as string, 10) || DEFAULT_EVM_CHAIN_ID;
 
       logger.info('Transaction status request', { txHash, chainId });
 
@@ -244,7 +245,7 @@ export class TreasuryController {
 
       return successResponse(res, {
         address,
-        supportedChains: [137, 11155111],
+        supportedChains: getSupportedChainIds().filter((id): id is number => id !== null),
       }, 'Treasury address retrieved');
 
     } catch (error) {
