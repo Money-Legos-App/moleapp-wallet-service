@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { prisma } from './lib/prisma';
-import { env } from './config/environment.js';
+import { env, developmentMode } from './config/environment.js';
 import { logger, morganStream } from './utils/logger.js';
 import walletRoutes from './routes/wallet.routes.js';
 import swapRoutes from './routes/swap.routes.js';
@@ -144,7 +144,7 @@ const server = app.listen(env.port, () => {
   logger.info(`⚡ Account Abstraction: Kernel v3.1 + EntryPoint v0.7`);
   logger.info(`🛡️  Bundler: Pimlico`);
   logger.info(`💳 Paymaster: Sponsored transactions enabled`);
-  logger.info(`🔄 Swap: 0x API integration (Sepolia)`);
+  logger.info(`🔄 Swap: 0x API integration (${developmentMode ? 'Testnet' : 'Mainnet'})`);
   logger.info(`💰 Treasury: On/off-ramp settlements enabled`);
   
   // Test database connection
