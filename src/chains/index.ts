@@ -26,14 +26,24 @@ export { SolanaProgramUtils } from './ed25519/solana/programs.js';
 // Types
 export * from './types.js';
 
-// Chain constants
-export const SUPPORTED_CHAINS = {
-  EVM: ['ETH_SEPOLIA', 'POLYGON_AMOY'] as const, // 'BNB_TESTNET' temporarily disabled due to RPC connectivity issues
+// Environment-aware chain configuration
+import { developmentMode } from '../config/environment.js';
+
+// Chain constants - switch between testnet and mainnet based on environment
+export const SUPPORTED_CHAINS = developmentMode ? {
+  EVM: ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA'] as const,
   BITCOIN: ['BITCOIN_TESTNET'] as const,
   SOLANA: ['SOLANA_DEVNET'] as const
-} as const;
+} : {
+  EVM: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BNB_MAINNET'] as const,
+  BITCOIN: ['BITCOIN_MAINNET'] as const,
+  SOLANA: ['SOLANA_MAINNET'] as const
+};
 
-export const CHAIN_CURVES = {
-  SECP256K1: ['ETH_SEPOLIA', 'POLYGON_AMOY', 'BITCOIN_TESTNET'] as const, // 'BNB_TESTNET' temporarily disabled
+export const CHAIN_CURVES = developmentMode ? {
+  SECP256K1: ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA', 'BITCOIN_TESTNET'] as const,
   ED25519: ['SOLANA_DEVNET'] as const
-} as const;
+} : {
+  SECP256K1: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BNB_MAINNET', 'BITCOIN_MAINNET'] as const,
+  ED25519: ['SOLANA_MAINNET'] as const
+};

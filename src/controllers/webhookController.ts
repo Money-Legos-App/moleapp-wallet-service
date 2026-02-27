@@ -8,7 +8,8 @@ import {
   AlchemyActivity,
 } from '../utils/alchemyWebhook.js';
 
-const SEPOLIA_CHAIN_ID = 11155111;
+import { DEFAULT_EVM_CHAIN_ID } from '../config/networks.js';
+const DEFAULT_CHAIN_ID = DEFAULT_EVM_CHAIN_ID;
 
 /**
  * Format wei value to human-readable ETH string
@@ -44,7 +45,7 @@ async function findWalletByAddress(address: string) {
   const wallet = await prisma.wallet.findFirst({
     where: {
       address: { equals: normalizedAddress, mode: 'insensitive' },
-      chainId: SEPOLIA_CHAIN_ID,
+      chainId: DEFAULT_CHAIN_ID,
     },
     select: { id: true, userId: true, address: true },
   });
@@ -55,7 +56,7 @@ async function findWalletByAddress(address: string) {
   const kernelAccount = await prisma.kernelAccount.findFirst({
     where: {
       address: { equals: normalizedAddress, mode: 'insensitive' },
-      chainId: SEPOLIA_CHAIN_ID,
+      chainId: DEFAULT_CHAIN_ID,
     },
     select: { id: true, userId: true, address: true, walletId: true },
   });
@@ -179,7 +180,7 @@ export const webhookController = {
             toAddress: activity.toAddress.toLowerCase(),
             value: activity.rawContract.rawValue,
             status: 'confirmed',
-            chainId: SEPOLIA_CHAIN_ID,
+            chainId: DEFAULT_CHAIN_ID,
             transactionType: 'deposit',
             blockNumber: BigInt(blockNumber),
             tokenAddress: activity.category === 'erc20' ? activity.rawContract.address || null : null,

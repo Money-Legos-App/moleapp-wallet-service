@@ -1,14 +1,19 @@
 import { logger } from '../../utils/logger.js';
+import { developmentMode } from '../../config/environment.js';
 
 interface SubgraphResponse<T> {
   data: T;
   errors?: Array<{ message: string }>;
 }
 
-const SUBGRAPH_URLS: Record<number, string | undefined> = {
+const SUBGRAPH_URLS: Record<number, string | undefined> = developmentMode ? {
   11155111: process.env.GOLDSKY_SUBGRAPH_URL_SEPOLIA,
   421614: process.env.GOLDSKY_SUBGRAPH_URL_ARB_SEPOLIA,
   97: process.env.GOLDSKY_SUBGRAPH_URL_CHAPEL,
+} : {
+  1: process.env.GOLDSKY_SUBGRAPH_URL_ETH,
+  42161: process.env.GOLDSKY_SUBGRAPH_URL_ARBITRUM,
+  8453: process.env.GOLDSKY_SUBGRAPH_URL_BASE,
 };
 
 const TIMEOUT_MS = 10_000;

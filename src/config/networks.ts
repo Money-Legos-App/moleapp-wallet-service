@@ -180,6 +180,49 @@ const MAINNET_NETWORKS: Record<string, NetworkConfig> = {
     addressFormat: 'ETHEREUM',
     curve: 'SECP256K1',
   },
+
+  // BNB Smart Chain (mainnet equivalent of BNB_TESTNET)
+  'BNB_MAINNET': {
+    chainId: 56,
+    name: 'BNB Smart Chain',
+    rpcUrl: process.env.PROD_BSC_RPC_URL || process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org/',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/56/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/56/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://bscscan.com',
+    currencySymbol: 'BNB',
+    isTestnet: false,
+    chain: bscMainnet,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+
+  // Solana Mainnet (mainnet equivalent of SOLANA_DEVNET)
+  'SOLANA_MAINNET': {
+    chainId: null,
+    name: 'Solana',
+    rpcUrl: process.env.PROD_SOLANA_RPC_URL || process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+    explorerUrl: 'https://explorer.solana.com',
+    currencySymbol: 'SOL',
+    isTestnet: false,
+    chainType: 'SOLANA',
+    addressFormat: 'SOLANA',
+    curve: 'ED25519',
+  },
+
+  // Bitcoin Mainnet (mainnet equivalent of BITCOIN_TESTNET)
+  'BITCOIN_MAINNET': {
+    chainId: null,
+    name: 'Bitcoin',
+    rpcUrl: process.env.PROD_BITCOIN_RPC_URL || process.env.BITCOIN_RPC_URL || 'https://blockstream.info/api',
+    explorerUrl: 'https://blockstream.info',
+    currencySymbol: 'BTC',
+    isTestnet: false,
+    chainType: 'BITCOIN',
+    addressFormat: 'BITCOIN',
+    curve: 'SECP256K1',
+  },
 };
 
 // Active networks based on environment

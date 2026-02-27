@@ -11,13 +11,14 @@
  * Key features:
  * - Atomic nonce management to prevent stuck transactions
  * - Balance checks before operations
- * - Support for multiple chains (Polygon, Sepolia)
+ * - Support for multiple chains (Polygon, Arbitrum, Base, Sepolia)
  */
 
 import { prisma } from '../../lib/prisma';
 import { createPublicClient, createWalletClient, http, parseUnits, formatUnits, Address, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { polygon, sepolia } from 'viem/chains';
+import { polygon, sepolia, arbitrum, base } from 'viem/chains';
+import { developmentMode } from '../../config/environment';
 import { logger } from '../../utils/logger';
 
 // ================================
@@ -26,7 +27,7 @@ import { logger } from '../../utils/logger';
 
 interface ChainConfig {
   chainId: number;
-  chain: typeof polygon | typeof sepolia;
+  chain: typeof polygon | typeof sepolia | typeof arbitrum | typeof base;
   rpcUrl: string;
   usdtAddress: Address;
   explorerUrl: string;
@@ -46,6 +47,20 @@ const CHAIN_CONFIGS: Record<number, ChainConfig> = {
     rpcUrl: process.env.SEPOLIA_RPC_URL || 'https://rpc.sepolia.org',
     usdtAddress: (process.env.USDT_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000') as Address, // Deploy test token
     explorerUrl: 'https://sepolia.etherscan.io',
+  },
+  42161: {
+    chainId: 42161,
+    chain: arbitrum,
+    rpcUrl: process.env.ARBITRUM_RPC_URL || process.env.PROD_ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+    usdtAddress: (process.env.USDT_ADDRESS_ARBITRUM || '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9') as Address,
+    explorerUrl: 'https://arbiscan.io',
+  },
+  8453: {
+    chainId: 8453,
+    chain: base,
+    rpcUrl: process.env.BASE_RPC_URL || process.env.PROD_BASE_RPC_URL || 'https://mainnet.base.org',
+    usdtAddress: (process.env.USDT_ADDRESS_BASE || '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2') as Address,
+    explorerUrl: 'https://basescan.org',
   },
 };
 

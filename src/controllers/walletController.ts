@@ -10,6 +10,7 @@ import { ResponseUtils } from "../utils/responseUtils"
 import { AppError } from "../utils/appError"
 import { logger } from '../utils/logger.js';
 import { getTransactionHistory } from '../services/subgraph/index.js';
+import { getSupportedChainIds } from '../config/networks.js';
 import {
   CreateWalletRequest,
   SignTransactionRequest,
@@ -708,7 +709,7 @@ export const walletController = {
       const addresses: { chainId: number; address: string }[] = [];
       for (const wallet of wallets) {
         // EOA address on each supported EVM chain
-        for (const cid of [11155111, 421614, 97]) {
+        for (const cid of getSupportedChainIds().filter((id): id is number => id !== null)) {
           addresses.push({ chainId: cid, address: wallet.address });
         }
         // Kernel (smart account) addresses

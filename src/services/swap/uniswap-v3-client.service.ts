@@ -6,7 +6,8 @@
  */
 
 import { createPublicClient, http, parseAbi, type Address } from 'viem';
-import { sepolia } from 'viem/chains';
+import { sepolia, arbitrum } from 'viem/chains';
+import { developmentMode } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 
 // Uniswap V3 Pool ABI (minimal - just what we need)
@@ -28,8 +29,8 @@ const FEE_TIERS = [500, 3000, 10000]; // 0.05%, 0.3%, 1%
 // Contract addresses on Sepolia
 const SEPOLIA_FACTORY = '0x0227628f3F023bb0B980b67D528571c95c6DaC1c' as Address;
 
-// Sepolia RPC
-const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || 'https://rpc.sepolia.org';
+// RPC URL (environment-aware)
+const CHAIN_RPC = process.env.ETH_RPC_URL || process.env.SEPOLIA_RPC_URL || 'https://rpc.sepolia.org';
 
 export interface UniswapQuoteParams {
   chainId: number;
@@ -58,8 +59,8 @@ export class UniswapV3ClientService {
   constructor(chainId: number) {
     this.chainId = chainId;
     this.client = createPublicClient({
-      chain: sepolia,
-      transport: http(SEPOLIA_RPC),
+      chain: developmentMode ? sepolia : arbitrum,
+      transport: http(CHAIN_RPC),
     });
   }
 

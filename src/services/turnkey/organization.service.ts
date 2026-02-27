@@ -1,7 +1,7 @@
 import { PrismaClient } from '../../lib/prisma';
 import { Address } from 'viem';
 import { TurnkeyBaseService } from './base.service.js';
-import { env } from '../../config/environment.js';
+import { env, developmentMode } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 import { TurnkeySubOrgConfig } from '../../types/index.js';
 import { getSupportedChainKeys, getNetworkConfig } from '../../config/networks.js';
@@ -93,12 +93,12 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
               path: "m/44'/501'/0'/0'",
               addressFormat: 'ADDRESS_FORMAT_SOLANA'
             },
-            // Bitcoin testnet account (P2WPKH - SegWit)
+            // Bitcoin account (P2WPKH - SegWit) — path and format depend on environment
             {
               curve: 'CURVE_SECP256K1',
               pathFormat: 'PATH_FORMAT_BIP32',
-              path: "m/84'/1'/0'/0/0",
-              addressFormat: 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH'
+              path: developmentMode ? "m/84'/1'/0'/0/0" : "m/84'/0'/0'/0/0",
+              addressFormat: developmentMode ? 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH' : 'ADDRESS_FORMAT_BITCOIN_MAINNET_P2WPKH'
             }
           ]
         }
@@ -173,9 +173,9 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
           if (account.curve === 'CURVE_SECP256K1' && account.addressFormat === 'ADDRESS_FORMAT_ETHEREUM') {
             ethereumAddress = account.address;
             logger.info(`✅ Found real Ethereum address from Turnkey: ${ethereumAddress}`);
-          } else if (account.curve === 'CURVE_SECP256K1' && account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH') {
-            actualBitcoinAddress = account.address; // Bitcoin testnet address (tb1...)
-            logger.info(`✅ Found real Bitcoin testnet address from Turnkey: ${actualBitcoinAddress}`);
+          } else if (account.curve === 'CURVE_SECP256K1' && (account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH' || account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_MAINNET_P2WPKH')) {
+            actualBitcoinAddress = account.address;
+            logger.info(`✅ Found real Bitcoin address from Turnkey: ${actualBitcoinAddress} (format: ${account.addressFormat})`);
           } else if (account.curve === 'CURVE_ED25519' && account.addressFormat === 'ADDRESS_FORMAT_SOLANA') {
             actualSolanaKey = account.address;
             logger.info(`✅ Found real Solana address from Turnkey: ${actualSolanaKey}`);
@@ -229,12 +229,12 @@ export class TurnkeyOrganizationService extends TurnkeyBaseService {
             continue;
           }
         } else if (networkConfig.chainType === 'BITCOIN') {
-          // Use actual Bitcoin testnet address from Turnkey (tb1... format)
+          // Use actual Bitcoin address from Turnkey (tb1... for testnet, bc1... for mainnet)
           if (actualBitcoinAddress) {
-            chainAddress = actualBitcoinAddress; // Already proper tb1... address from Turnkey
-            logger.info(`Using real Bitcoin testnet address from Turnkey: ${chainAddress}`);
+            chainAddress = actualBitcoinAddress;
+            logger.info(`Using real Bitcoin address from Turnkey for ${chainKey}: ${chainAddress}`);
           } else {
-            logger.error(`No Bitcoin testnet address found in Turnkey for ${chainKey}, skipping chain`);
+            logger.error(`No Bitcoin address found in Turnkey for ${chainKey}, skipping chain`);
             continue;
           }
         } else {

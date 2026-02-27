@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
 import { hashTypedData, keccak256, toBytes } from 'viem';
 import { logger } from '../utils/logger.js';
+import { DEFAULT_EVM_CHAIN_ID } from '../config/networks.js';
 
 /**
  * Agent Controller
@@ -1057,7 +1058,7 @@ export const agentController = {
       }
 
       // Ensure Kernel account exists on Arbitrum Sepolia
-      const targetChainId = chainId || 421614;
+      const targetChainId = chainId || DEFAULT_EVM_CHAIN_ID;
       let kernelAccount = await prisma.kernelAccount.findFirst({
         where: { walletId: mission.walletId, chainId: targetChainId },
       });

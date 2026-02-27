@@ -135,7 +135,7 @@ model Wallet {
   address          String
   name             String    @default("My Wallet")
   userId           String
-  chainId          Int       @default(11155111)
+  chainId          Int       @default(42161)
   walletType       String    @default("smart_wallet")
   deploymentStatus String    @default("counterfactual")
   nonce            BigInt    @default(0)
@@ -170,7 +170,7 @@ model Balance {
   walletId          String
   tokenAddress      String   @default("native")
   balance           Decimal  @default(0) @db.Decimal(78,18)
-  chainId           Int      @default(11155111)
+  chainId           Int      @default(42161)
   tokenName         String?
   tokenSymbol       String?
   tokenDecimals     Int      @default(18)
@@ -195,7 +195,7 @@ model Transaction {
   toAddress               String?
   value                   Decimal?  @db.Decimal(78,18)
   status                  String    @default("pending")
-  chainId                 Int       @default(11155111)
+  chainId                 Int       @default(42161)
   transactionType         String    @default("transfer")
   gasLimit                BigInt?
   gasUsed                 BigInt?

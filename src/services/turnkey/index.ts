@@ -142,9 +142,9 @@ export class TurnkeyService {
         } else if (account.curve === 'CURVE_ED25519' && account.addressFormat === 'ADDRESS_FORMAT_SOLANA') {
           result.solana = account.address;
           logger.info(`✅ Real Solana address from Turnkey API: ${account.address}`);
-        } else if (account.curve === 'CURVE_SECP256K1' && (account.addressFormat === 'ADDRESS_FORMAT_COMPRESSED' || account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH')) {
+        } else if (account.curve === 'CURVE_SECP256K1' && (account.addressFormat === 'ADDRESS_FORMAT_COMPRESSED' || account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_TESTNET_P2WPKH' || account.addressFormat === 'ADDRESS_FORMAT_BITCOIN_MAINNET_P2WPKH')) {
           result.bitcoin = account.address;
-          logger.info(`✅ Real Bitcoin address from Turnkey API: ${account.address}`);
+          logger.info(`✅ Real Bitcoin address from Turnkey API: ${account.address} (${account.addressFormat})`);
         } else {
           logger.warn(`❓ Unknown account type from Turnkey: curve=${account.curve}, format=${account.addressFormat}`);
         }

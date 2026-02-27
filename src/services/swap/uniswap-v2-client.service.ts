@@ -8,7 +8,8 @@
  */
 
 import { createPublicClient, http, parseAbi, encodeFunctionData, type Address, type Hex } from 'viem';
-import { sepolia } from 'viem/chains';
+import { sepolia, arbitrum } from 'viem/chains';
+import { developmentMode } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 import { UNISWAP_V2_CONFIG } from '../../config/uniswap-v2.config.js';
 import type { UniswapV2QuoteParams, UniswapV2QuoteResponse } from './swap.types.js';
@@ -38,15 +39,15 @@ const PAIR_ABI = parseAbi([
 ]);
 
 // Sepolia RPC URL
-const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || 'https://rpc.sepolia.org';
+const CHAIN_RPC = process.env.ETH_RPC_URL || process.env.SEPOLIA_RPC_URL || 'https://rpc.sepolia.org';
 
 export class UniswapV2ClientService {
   private client: ReturnType<typeof createPublicClient>;
 
   constructor(chainId: number) {
     this.client = createPublicClient({
-      chain: sepolia,
-      transport: http(SEPOLIA_RPC),
+      chain: developmentMode ? sepolia : arbitrum,
+      transport: http(CHAIN_RPC),
     });
 
     logger.info(`UniswapV2Client initialized for chain ${chainId}`, {
