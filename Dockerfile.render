@@ -38,6 +38,7 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package*.json ./
 
 # Copy production startup script (runs prisma db push before starting)
@@ -52,12 +53,12 @@ RUN mkdir -p logs && \
 # Switch to non-root user
 USER walletservice
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
+# Health check (Render injects PORT=10000 for private services)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-10000}/health || exit 1
 
-# Expose port
-EXPOSE 3002
+# Expose port (Render private services default to 10000)
+EXPOSE 10000
 
 # Start with schema sync then application
 ENTRYPOINT ["dumb-init", "--"]
