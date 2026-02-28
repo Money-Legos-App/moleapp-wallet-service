@@ -399,4 +399,45 @@ router.post('/withdraw-from-hyperliquid',
   agentController.withdrawFromHyperliquid
 );
 
+/**
+ * Transfer USDC from user's ZeroDev wallet to per-mission Master EOA on Arbitrum.
+ * Executes as a gasless UserOperation via Pimlico paymaster.
+ */
+router.post('/transfer-to-master-eoa',
+  signingRateLimit,
+  [
+    body('missionId')
+      .isUUID()
+      .withMessage('Valid mission ID is required'),
+    body('masterEoaAddress')
+      .matches(/^0x[a-fA-F0-9]{40}$/)
+      .withMessage('Valid Ethereum address is required for Master EOA'),
+    body('amount')
+      .isString()
+      .notEmpty()
+      .withMessage('USDC amount is required')
+  ],
+  validateRequest,
+  agentController.transferToMasterEoa
+);
+
+/**
+ * Store the agent address on a mission.
+ * Called by agent-service after SDK approve_agent() succeeds.
+ * The agent key itself is stored as Vault ciphertext by agent-service directly.
+ */
+router.post('/mission/:missionId/store-agent-key',
+  signingRateLimit,
+  [
+    param('missionId')
+      .isUUID()
+      .withMessage('Valid mission ID is required'),
+    body('agentAddress')
+      .matches(/^0x[a-fA-F0-9]{40}$/)
+      .withMessage('Valid Ethereum address is required for agent'),
+  ],
+  validateRequest,
+  agentController.storeAgentKey
+);
+
 export default router;

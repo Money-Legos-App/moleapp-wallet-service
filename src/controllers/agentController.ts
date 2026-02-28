@@ -494,19 +494,54 @@ export const agentController = {
 
       logger.info('Updating mission status', { missionId, status });
 
+      // Enforce valid state transitions
+      const VALID_TRANSITIONS: Record<string, string[]> = {
+        'PENDING':     ['DEPOSITING', 'REVOKED'],
+        'DEPOSITING':  ['APPROVING', 'ACTIVE', 'PENDING', 'REVOKED'],
+        'APPROVING':   ['ACTIVE', 'PENDING', 'REVOKED'],
+        'ACTIVE':      ['PAUSED', 'COMPLETING', 'COMPLETED', 'LIQUIDATED', 'REVOKED'],
+        'PAUSED':      ['ACTIVE', 'REVOKED', 'COMPLETING', 'COMPLETED'],
+        'COMPLETING':  ['COMPLETED'],
+        'COMPLETED':   [],
+        'LIQUIDATED':  [],
+        'REVOKED':     ['COMPLETING', 'COMPLETED'],
+      };
+
+      const currentMission = await prisma.agentMission.findUnique({
+        where: { id: missionId },
+        select: { status: true, durationDays: true },
+      });
+
+      if (!currentMission) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOT_FOUND',
+          message: 'Mission not found',
+        });
+      }
+
+      const allowedNext = VALID_TRANSITIONS[currentMission.status] || [];
+      if (!allowedNext.includes(status)) {
+        logger.warn('Invalid status transition attempted', {
+          missionId,
+          from: currentMission.status,
+          to: status,
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_TRANSITION',
+          message: `Cannot transition from '${currentMission.status}' to '${status}'`,
+        });
+      }
+
       const updateData: any = { status };
 
       // Handle status-specific updates
       if (status === 'ACTIVE' && !metadata?.startedAt) {
         updateData.startedAt = new Date();
         updateData.hyperliquidApproved = true;
-        // Calculate end date
-        const mission = await prisma.agentMission.findUnique({
-          where: { id: missionId },
-          select: { durationDays: true }
-        });
-        if (mission) {
-          updateData.endsAt = new Date(Date.now() + mission.durationDays * 24 * 60 * 60 * 1000);
+        if (currentMission.durationDays) {
+          updateData.endsAt = new Date(Date.now() + currentMission.durationDays * 24 * 60 * 60 * 1000);
         }
       }
 
@@ -1265,6 +1300,234 @@ export const agentController = {
 
     } catch (error: any) {
       logger.error('HL withdrawal signing failed', { error: error.message });
+      next(error);
+    }
+  },
+
+  /**
+   * Transfer USDC from user's ZeroDev wallet to per-mission Master EOA on Arbitrum.
+   *
+   * Executes as a gasless UserOperation via Pimlico paymaster.
+   * Called by agent-service after mission creation so the Master EOA has USDC
+   * to bridge into Hyperliquid.
+   *
+   * Flow:
+   * 1. Validate mission exists and is PENDING/DEPOSITING
+   * 2. Find/create Kernel account on Arbitrum
+   * 3. Build USDC.transfer(masterEoa, amount) UserOp
+   * 4. Submit via Pimlico paymaster (gasless)
+   * 5. Return userOpHash for tracking
+   */
+  transferToMasterEoa: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { missionId, masterEoaAddress, amount } = req.body;
+
+      logger.info('Initiating USDC transfer to Master EOA', { missionId, masterEoaAddress, amount });
+
+      // Fetch mission with signer info
+      const mission = await prisma.agentMission.findUnique({
+        where: { id: missionId },
+        include: { turnkeySigner: true },
+      });
+
+      if (!mission) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOT_FOUND',
+          message: 'Mission not found',
+        });
+      }
+
+      const allowedStatuses = ['PENDING', 'DEPOSITING'];
+      if (!allowedStatuses.includes(mission.status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_STATUS',
+          message: `Mission must be PENDING or DEPOSITING to transfer. Current: ${mission.status}`,
+        });
+      }
+
+      const turnkeySigner = mission.turnkeySigner;
+      if (!turnkeySigner) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOT_FOUND',
+          message: 'Turnkey signer not found for mission',
+        });
+      }
+
+      // Ensure Kernel account exists on Arbitrum
+      const targetChainId = DEFAULT_EVM_CHAIN_ID;
+      let kernelAccount = await prisma.kernelAccount.findFirst({
+        where: { walletId: mission.walletId, chainId: targetChainId },
+      });
+
+      if (!kernelAccount) {
+        const { KernelAccountFactory } = await import('../services/kernel/account-factory.service.js');
+        const { TurnkeyEVMSignerService } = await import('../services/turnkey/evm-signer.service.js');
+
+        const evmSigner = new TurnkeyEVMSignerService(prisma);
+        const factory = new KernelAccountFactory(prisma, evmSigner);
+
+        await factory.createKernelAccount(
+          mission.userId,
+          targetChainId,
+          turnkeySigner.address as `0x${string}`,
+          turnkeySigner.turnkeySubOrgId,
+          mission.walletId,
+        );
+
+        kernelAccount = await prisma.kernelAccount.findFirst({
+          where: { walletId: mission.walletId, chainId: targetChainId },
+        });
+
+        if (!kernelAccount) {
+          return res.status(500).json({
+            success: false,
+            error: 'ACCOUNT_CREATION_FAILED',
+            message: 'Failed to create Kernel account on Arbitrum',
+          });
+        }
+      }
+
+      // Build USDC.transfer(masterEoa, amount) call
+      const { encodeFunctionData, parseAbi } = await import('viem');
+
+      const usdcAddress = (process.env.USDC_ADDRESS_ARBITRUM ||
+        (process.env.NODE_ENV === 'development'
+          ? '0x1baAbB04529D43a73232B713C0FE471f7c7334d5'   // Arbitrum Sepolia testnet USDC
+          : '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'   // Arbitrum One native USDC
+        )) as `0x${string}`;
+
+      const usdcAmount = BigInt(Math.floor(parseFloat(amount) * 1e6));
+
+      const transferData = encodeFunctionData({
+        abi: parseAbi(['function transfer(address to, uint256 amount) returns (bool)']),
+        functionName: 'transfer',
+        args: [masterEoaAddress as `0x${string}`, usdcAmount],
+      });
+
+      const calls = [{
+        to: usdcAddress,
+        value: 0n,
+        data: transferData,
+      }];
+
+      // Submit as gasless UserOperation via Pimlico paymaster
+      const { KernelService } = await import('../services/kernel/account-abstraction.service.js');
+      const { TurnkeyService } = await import('../services/turnkey/index.js');
+      const turnkeyService = new TurnkeyService(prisma);
+      const kernelService = new KernelService(prisma, turnkeyService);
+
+      const result = await kernelService.submitUserOperation(
+        mission.walletId,
+        targetChainId,
+        calls,
+        true, // sponsor gas
+      );
+
+      // Update mission metadata with transfer tracking
+      await prisma.agentMission.update({
+        where: { id: missionId },
+        data: {
+          status: 'DEPOSITING',
+          metadata: {
+            ...((mission.metadata as any) || {}),
+            transferToMasterEoaHash: result.userOpHash,
+            transferAmount: amount,
+            transferInitiatedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      logger.info('USDC transfer to Master EOA submitted', {
+        missionId,
+        userOpHash: result.userOpHash,
+        masterEoaAddress,
+        amount,
+      });
+
+      return res.json({
+        success: true,
+        userOpHash: result.userOpHash,
+        status: 'DEPOSITING',
+        chainId: targetChainId,
+      });
+
+    } catch (error: any) {
+      logger.error('Transfer to Master EOA failed', { error: error.message });
+      next(error);
+    }
+  },
+
+  /**
+   * Store the agent address on a mission.
+   *
+   * Called by agent-service after `Exchange.approve_agent()` succeeds.
+   * The agent KEY is stored as Vault ciphertext in the DB by agent-service
+   * directly (via raw SQL). This endpoint only records the agent address.
+   *
+   * Flow:
+   * 1. Validate mission exists and is in valid state
+   * 2. Store agentAddress on the mission
+   */
+  storeAgentKey: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { missionId } = req.params;
+      const { agentAddress } = req.body;
+
+      logger.info('Storing agent address', { missionId, agentAddress });
+
+      const mission = await prisma.agentMission.findUnique({
+        where: { id: missionId },
+      });
+
+      if (!mission) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOT_FOUND',
+          message: 'Mission not found',
+        });
+      }
+
+      // State check: allow during deposit/approval/active flow
+      if (!['DEPOSITING', 'APPROVING', 'ACTIVE'].includes(mission.status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_STATUS',
+          message: `Cannot store agent address when mission status is '${mission.status}'`,
+        });
+      }
+
+      // Idempotency: if address already set, just acknowledge
+      if (mission.agentAddress && mission.agentAddress === agentAddress) {
+        return res.json({
+          success: true,
+          agentAddress,
+          message: 'Agent address already stored',
+        });
+      }
+
+      // Store agent address on mission record
+      await prisma.agentMission.update({
+        where: { id: missionId },
+        data: {
+          agentAddress,
+        },
+      });
+
+      logger.info('Agent address stored successfully', {
+        missionId,
+        agentAddress,
+      });
+
+      return res.json({
+        success: true,
+        agentAddress,
+      });
+
+    } catch (error: any) {
+      logger.error('Failed to store agent address', { error: error.message });
       next(error);
     }
   },

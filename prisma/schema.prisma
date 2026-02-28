@@ -1366,6 +1366,19 @@ model AgentMission {
   hyperliquidApproved Boolean          @default(false)
   approvalTxHash      String?
 
+  // Per-mission Master EOA (Vault Transit encrypts the private key)
+  masterEoaAddress    String?           // Derived locally from Account.create()
+  masterEoaKeyEnc     String?           // Vault Transit ciphertext (vault:v1:...)
+  vaultKeyCreated     Boolean          @default(false)
+  vaultKeyDestroyed   Boolean          @default(false)
+
+  // Fee tracking (populated at mission exit)
+  finalBalance        Decimal?         @db.Decimal(20,8)
+  protocolFee         Decimal?         @db.Decimal(20,8)
+  userPayout          Decimal?         @db.Decimal(20,8)
+  feeCollectedAt      DateTime?
+  payoutCompletedAt   DateTime?
+
   // Mission configuration
   strategy            StrategyType     @default(SHORT_TERM_30D)
   riskLevel           AgentRiskLevel   @default(MODERATE)
@@ -1408,6 +1421,7 @@ model AgentMission {
   @@index([userId, status])
   @@index([endsAt, status])
   @@index([agentAddress])
+  @@index([masterEoaAddress])
   @@map("agent_missions")
 }
 
@@ -1536,6 +1550,34 @@ model AgentPnLSnapshot {
 
   @@index([missionId, timestamp])
   @@map("agent_pnl_snapshots")
+}
+
+model PlatformFeeRecord {
+  id                String   @id @default(uuid())
+  missionId         String   @unique
+  userId            String
+
+  // Financial summary
+  initialCapital    Decimal  @db.Decimal(20,8)
+  finalBalance      Decimal  @db.Decimal(20,8)
+  profit            Decimal  @db.Decimal(20,8)
+
+  // Fee details
+  feePercent        Float    @default(30)
+  feeAmount         Decimal  @db.Decimal(20,8)
+
+  // Arbitrum TX hashes
+  feeTxHash         String?
+  payoutTxHash      String?
+
+  // Status: PENDING → FEE_SENT → PAYOUT_SENT → COMPLETED
+  status            String   @default("PENDING")
+
+  createdAt         DateTime @default(now())
+
+  @@index([userId])
+  @@index([status])
+  @@map("platform_fee_records")
 }
 
 // ================================
@@ -1676,9 +1718,10 @@ enum MorphoTransactionStatus {
 enum MissionStatus {
   PENDING
   DEPOSITING
-  APPROVING
+  APPROVING    // @deprecated — kept for backward compat; new flow skips this state
   ACTIVE
   PAUSED
+  COMPLETING   // Positions being closed, withdrawal + fee split in progress
   COMPLETED
   LIQUIDATED
   REVOKED

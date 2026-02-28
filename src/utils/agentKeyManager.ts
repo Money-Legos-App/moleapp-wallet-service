@@ -24,17 +24,25 @@ import { logger } from './logger.js';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const KEY_LENGTH = 32;
+const HKDF_SALT = 'moleapp-agent-key-encryption-v1';
 
 /**
  * Get the encryption key from environment.
- * Derives a 32-byte key from the secret using SHA-256.
+ * Derives a 32-byte key from the secret using HKDF (RFC 5869)
+ * with SHA-256 as the hash function and a fixed application salt.
  */
 function getEncryptionKey(): Buffer {
   const secret = process.env.AGENT_KEY_ENCRYPTION_SECRET;
   if (!secret) {
     throw new Error('AGENT_KEY_ENCRYPTION_SECRET is required for agent key management');
   }
-  return crypto.createHash('sha256').update(secret).digest();
+  return Buffer.from(crypto.hkdfSync(
+    'sha256',
+    secret,
+    HKDF_SALT,
+    'agent-key-enc',
+    KEY_LENGTH,
+  ));
 }
 
 /**
@@ -102,6 +110,37 @@ export function decryptAgentKey(
   decrypted += decipher.final('utf8');
 
   return decrypted as Hex;
+}
+
+/**
+ * Encrypt an existing agent private key.
+ * Used when agent-service sends back an SDK-generated agent key
+ * that needs to be stored encrypted in the DB.
+ *
+ * @param privateKeyHex - Raw private key hex string (with or without 0x prefix)
+ * @returns Encrypted key components for DB storage
+ */
+export function encryptAgentKey(privateKeyHex: string): {
+  privateKeyEncrypted: string;
+  iv: string;
+  authTag: string;
+} {
+  // Normalize to 0x-prefixed
+  const normalizedKey = privateKeyHex.startsWith('0x') ? privateKeyHex : `0x${privateKeyHex}`;
+
+  const encryptionKey = getEncryptionKey();
+  const iv = crypto.randomBytes(IV_LENGTH);
+
+  const cipher = crypto.createCipheriv(ALGORITHM, encryptionKey, iv);
+  let encrypted = cipher.update(normalizedKey, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag();
+
+  return {
+    privateKeyEncrypted: encrypted,
+    iv: iv.toString('hex'),
+    authTag: authTag.toString('hex'),
+  };
 }
 
 /**
