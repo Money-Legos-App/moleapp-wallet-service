@@ -41,7 +41,7 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package*.json ./
 
-# Copy production startup script (runs prisma db push before starting)
+# Copy production startup script (runs prisma migrate deploy before starting)
 COPY start.sh ./start.sh
 
 # Create logs directory and set permissions
@@ -60,6 +60,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
 # Expose port (app defaults to 3002; Render routes service mesh to EXPOSE port)
 EXPOSE 3002
 
-# Start with schema sync then application
+# Start with migration then application
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./start.sh"]
