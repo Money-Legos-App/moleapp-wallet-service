@@ -53,12 +53,12 @@ RUN mkdir -p logs && \
 # Switch to non-root user
 USER walletservice
 
-# Health check (Render injects PORT=10000 for private services)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-10000}/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
 
-# Expose port (Render private services default to 10000)
-EXPOSE 10000
+# Expose port (app defaults to 3002; Render routes service mesh to EXPOSE port)
+EXPOSE 3002
 
 # Start with schema sync then application
 ENTRYPOINT ["dumb-init", "--"]
