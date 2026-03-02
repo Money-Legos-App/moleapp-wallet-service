@@ -1,7 +1,7 @@
 import { PrismaClient } from '../../lib/prisma';
 import { Address } from 'viem';
 import { TurnkeyBaseService } from './base.service.js';
-import { env } from '../../config/environment.js';
+import { env, developmentMode } from '../../config/environment.js';
 import { logger } from '../../utils/logger.js';
 import crypto from 'crypto';
 
@@ -46,7 +46,8 @@ export class TurnkeyBitcoinSignerService extends TurnkeyBaseService {
 
       // Get Bitcoin address from stored chain addresses
       const allChainAddresses = (signerRecord.passkeyConfig as any)?.allChainAddresses || {};
-      const bitcoinAddress = allChainAddresses['BITCOIN_TESTNET']?.address;
+      const btcChainKey = developmentMode ? 'BITCOIN_TESTNET' : 'BITCOIN_MAINNET';
+      const bitcoinAddress = allChainAddresses[btcChainKey]?.address;
 
       if (!bitcoinAddress) {
         throw new Error(`No Bitcoin address found for sub-org ${turnkeySubOrgId}`);

@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger.js';
 import { ChainServiceFactory } from '../../chains/factory.js';
 import { TurnkeyService } from '../turnkey/index.js';
 import { NETWORKS, getSupportedChainKeys, getNetworkConfig } from '../../config/networks.js';
+import { developmentMode } from '../../config/environment.js';
 import {
   CreateWalletResponse,
   UserOperationRequest,
@@ -193,13 +194,13 @@ export class WalletOrchestrator {
                             addressFormat: 'ETHEREUM',
                             curve: 'CURVE_SECP256K1'
                           },
-                          'SOLANA_DEVNET': allAddresses.solana ? {
+                          [developmentMode ? 'SOLANA_DEVNET' : 'SOLANA_MAINNET']: allAddresses.solana ? {
                             address: allAddresses.solana,
                             chainType: 'SOLANA',
                             addressFormat: 'SOLANA',
                             curve: 'CURVE_ED25519'
                           } : undefined,
-                          'BITCOIN_TESTNET': allAddresses.bitcoin ? {
+                          [developmentMode ? 'BITCOIN_TESTNET' : 'BITCOIN_MAINNET']: allAddresses.bitcoin ? {
                             address: allAddresses.bitcoin,
                             chainType: 'BITCOIN',
                             addressFormat: 'BITCOIN',
@@ -290,7 +291,8 @@ export class WalletOrchestrator {
               const allChainAddresses = (await this.prisma.turnkeySigner.findFirst({
                 where: { turnkeySubOrgId: sharedSubOrgId!, isActive: true }
               }))?.passkeyConfig as any;
-              walletAddress = allChainAddresses?.allChainAddresses?.['BITCOIN_TESTNET']?.address;
+              const btcChainKey = developmentMode ? 'BITCOIN_TESTNET' : 'BITCOIN_MAINNET';
+              walletAddress = allChainAddresses?.allChainAddresses?.[btcChainKey]?.address;
               if (!walletAddress) {
                 logger.error(`❌ [ORCHESTRATOR] No Bitcoin address available for user ${userId}`);
                 continue;
@@ -341,8 +343,10 @@ export class WalletOrchestrator {
 
       // Update TurnkeySigner walletId from temp to real wallet ID
       // The TurnkeySigner is created early with a temp walletId; now that real wallets exist, link to the primary EVM wallet
-      // Ethereum Sepolia = 11155111, BSC Testnet = 97 — prefer ETH Sepolia as the primary
-      const evmWallet = results.find(r => r.chainId === 11155111) || results.find(r => r.chainId === 97) || results[0];
+      // Prefer primary EVM chain: Sepolia (11155111) in dev, Ethereum mainnet (1) or Arbitrum (42161) in prod
+      const evmWallet = developmentMode
+        ? (results.find(r => r.chainId === 11155111) || results.find(r => r.chainId === 97) || results[0])
+        : (results.find(r => r.chainId === 1) || results.find(r => r.chainId === 42161) || results[0]);
       if (evmWallet) {
         const updated = await this.prisma.turnkeySigner.updateMany({
           where: {

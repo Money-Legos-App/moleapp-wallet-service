@@ -136,6 +136,6 @@ export type AddressFormat = 'ETHEREUM' | 'SOLANA' | 'BITCOIN' | 'COSMOS';
 
 // Supported Chain Keys
 export type EVMChainKey = 'ETH_SEPOLIA' | 'ARBITRUM_SEPOLIA' | 'BNB_TESTNET' | 'POLYGON_AMOY' | 'ETH_MAINNET' | 'ARBITRUM_ONE' | 'BASE';
-export type BitcoinChainKey = 'BITCOIN_TESTNET';
-export type SolanaChainKey = 'SOLANA_DEVNET';
+export type BitcoinChainKey = 'BITCOIN_TESTNET' | 'BITCOIN_MAINNET';
+export type SolanaChainKey = 'SOLANA_DEVNET' | 'SOLANA_MAINNET';
 export type SupportedChainKey = EVMChainKey | BitcoinChainKey | SolanaChainKey;

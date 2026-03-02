@@ -1,7 +1,10 @@
 import { PrismaClient } from '../../../lib/prisma';
 import { Address } from 'viem';
 import { logger } from '../../../utils/logger.js';
+import { developmentMode } from '../../../config/environment.js';
 import { ChainService, CreateWalletResponse, TransactionRequest, TransactionResponse, BalanceResponse } from '../../types.js';
+
+const BITCOIN_CHAIN_KEY = developmentMode ? 'BITCOIN_TESTNET' : 'BITCOIN_MAINNET';
 
 /**
  * Bitcoin Chain Service
@@ -53,7 +56,7 @@ export class BitcoinService implements ChainService {
             isActive: true,
             lastActivityAt: new Date(),
             metadata: {
-              chainKey: 'BITCOIN_TESTNET',
+              chainKey: BITCOIN_CHAIN_KEY,
               chainType: 'BITCOIN',
               turnkeySubOrgId: subOrgId,
               turnkeyUserId: turnkeyUserId,
@@ -74,7 +77,7 @@ export class BitcoinService implements ChainService {
             ownerAddress: walletAddress,
             isActive: true,
             metadata: {
-              chainKey: 'BITCOIN_TESTNET',
+              chainKey: BITCOIN_CHAIN_KEY,
               chainType: 'BITCOIN',
               turnkeySubOrgId: subOrgId,
               turnkeyUserId: turnkeyUserId,
