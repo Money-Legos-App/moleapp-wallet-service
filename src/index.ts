@@ -7,9 +7,11 @@ import { env, developmentMode } from './config/environment.js';
 import { logger, morganStream } from './utils/logger.js';
 import walletRoutes from './routes/wallet.routes.js';
 import swapRoutes from './routes/swap.routes.js';
+import bridgeRoutes from './routes/bridge.routes.js';
 import treasuryRoutes from './routes/treasury.routes.js';
 import agentRoutes from './routes/agent.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
+import { BridgePollerService } from './services/bridge/bridge-poller.service.js';
 
 const app = express();
 
@@ -66,6 +68,7 @@ app.get('/health', async (req, res) => {
 // API routes
 app.use('/api/v2/wallet', walletRoutes);
 app.use('/api/v2/swap', swapRoutes);
+app.use('/api/v2/bridge', bridgeRoutes);
 app.use('/api/v2/treasury', treasuryRoutes);
 
 // Internal agent routes (for agent-service only)
@@ -102,11 +105,16 @@ app.use((error: any, req: express.Request, res: express.Response, next: express.
   });
 });
 
+// Start bridge poller (cross-chain bridge status tracking)
+const bridgePoller = new BridgePollerService(prisma);
+bridgePoller.start();
+
 // Graceful shutdown handling
 const gracefulShutdown = async (signal: string) => {
   logger.info(`Received ${signal}. Starting graceful shutdown...`);
-  
+
   try {
+    bridgePoller.stop();
     // Close database connection
     await prisma.$disconnect();
     logger.info('Database connection closed');

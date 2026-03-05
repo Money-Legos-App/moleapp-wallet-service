@@ -1,0 +1,161 @@
+/**
+ * Across Protocol v4 Bridge Types
+ * Cross-chain bridge via Across /swap/approval API
+ */
+
+// ============ REQUEST TYPES ============
+
+export interface BridgeQuoteRequest {
+  walletId: string;
+  inputToken: string;         // Token symbol ('ETH', 'USDC') or address
+  outputToken: string;        // Token symbol or address on destination chain
+  amount: string;             // Amount in smallest unit (wei for ETH)
+  originChainId: number;      // Source chain
+  destinationChainId?: number; // Defaults to Arbitrum
+  slippage?: number;          // 0.005 = 0.5%
+}
+
+export interface BridgeExecuteRequest {
+  walletId: string;
+  quoteId: string;
+  amount: string;
+  originChainId: number;
+  destinationChainId?: number;
+}
+
+export interface BridgeForMissionRequest {
+  missionId: string;
+  walletId: string;
+  amount: string;
+  sourceChainId: number;
+  inputToken: string;
+  recipientAddress: string;   // Master EOA or Kernel account on Arbitrum
+}
+
+// ============ RESPONSE TYPES ============
+
+export interface BridgeQuoteResponse {
+  quoteId: string;
+  originChainId: number;
+  destinationChainId: number;
+  inputToken: string;
+  outputToken: string;
+  inputAmount: string;
+  expectedOutputAmount: string;
+  minOutputAmount: string;
+  bridgeFeeUsd: string;
+  relayerFeePercent: string;
+  estimatedFillTime: number;
+  expiresAt: number;
+  requiresApproval: boolean;
+}
+
+export interface BridgeExecuteResponse {
+  bridgeOperationId: string;
+  userOpHash: string;
+  status: 'submitted';
+  originChainId: number;
+  destinationChainId: number;
+  inputAmount: string;
+  expectedOutputAmount: string;
+  sponsored: boolean;
+}
+
+export interface BridgeStatusResponse {
+  bridgeOperationId: string;
+  status: 'PENDING' | 'DEPOSIT_CONFIRMED' | 'FILLED' | 'REFUNDED' | 'FAILED';
+  userOpHash?: string;
+  depositTxHash?: string;
+  fillTxHash?: string;
+  inputAmount: string;
+  outputAmount?: string;
+  originChainId: number;
+  destinationChainId: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============ ACROSS API TYPES ============
+
+export interface AcrossSwapApprovalParams {
+  tradeType: 'EXACT_INPUT';
+  amount: string;
+  inputToken: string;
+  outputToken: string;
+  originChainId: number;
+  destinationChainId: number;
+  depositor: string;
+  recipient: string;
+  integratorId: string;
+  slippage: number;
+}
+
+export interface AcrossApprovalTxn {
+  to: string;
+  data: string;
+  value: string;
+}
+
+export interface AcrossTransaction {
+  to: string;
+  data: string;
+  value: string;
+}
+
+export interface AcrossSwapApprovalResponse {
+  approvalTxns: AcrossApprovalTxn[];
+  transaction: AcrossTransaction;       // Main bridge deposit tx
+  fees: {
+    totalRelayFee: { pct: string; total: string };
+    relayerCapitalFee: { pct: string; total: string };
+    relayerGasFee: { pct: string; total: string };
+    lpFee: { pct: string; total: string };
+  };
+  expectedOutputAmount: string;
+  minExpectedOutputAmount: string;
+  depositId?: string;
+}
+
+export interface AcrossDepositStatusResponse {
+  status: 'pending' | 'filled' | 'expired';
+  fillTxHash?: string;
+  outputAmount?: string;
+}
+
+// ============ INTERNAL CACHE TYPE ============
+
+export interface CachedBridgeQuoteData {
+  acrossResponse: AcrossSwapApprovalResponse;
+  walletId: string;
+  kernelAccountAddress: string;
+  recipientAddress: string;
+  originChainId: number;
+  destinationChainId: number;
+  inputToken: string;
+  outputToken: string;
+  amount: string;
+  expiresAt: number;
+}
+
+// ============ ERROR TYPES ============
+
+export type BridgeErrorCode =
+  | 'E050'   // BRIDGE_QUOTE_FAILED
+  | 'E051'   // BRIDGE_EXECUTION_FAILED
+  | 'E052'   // BRIDGE_STATUS_FAILED
+  | 'E053'   // BRIDGE_QUOTE_EXPIRED
+  | 'E054'   // BRIDGE_ROUTE_UNAVAILABLE
+  | 'E055'   // BRIDGE_AMOUNT_TOO_SMALL
+  | 'E056'   // BRIDGE_QUOTE_MISMATCH
+  | 'E057';  // BRIDGE_REFUNDED
+
+export const BRIDGE_ERRORS: Record<BridgeErrorCode, { code: BridgeErrorCode; error: string }> = {
+  E050: { code: 'E050', error: 'BRIDGE_QUOTE_FAILED' },
+  E051: { code: 'E051', error: 'BRIDGE_EXECUTION_FAILED' },
+  E052: { code: 'E052', error: 'BRIDGE_STATUS_FAILED' },
+  E053: { code: 'E053', error: 'BRIDGE_QUOTE_EXPIRED' },
+  E054: { code: 'E054', error: 'BRIDGE_ROUTE_UNAVAILABLE' },
+  E055: { code: 'E055', error: 'BRIDGE_AMOUNT_TOO_SMALL' },
+  E056: { code: 'E056', error: 'BRIDGE_QUOTE_MISMATCH' },
+  E057: { code: 'E057', error: 'BRIDGE_REFUNDED' },
+};

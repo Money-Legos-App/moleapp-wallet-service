@@ -101,6 +101,9 @@ export interface EnvironmentConfig {
   useTurnkeyViemSigner: boolean;
   enableWalletExport: boolean;
 
+  // Across Protocol (cross-chain bridge)
+  acrossIntegratorId: string;
+
   // Test configuration
   testWalletPrivateKey?: string;
   testWalletAddress?: string;
@@ -189,6 +192,9 @@ const validateEnvironment = (): EnvironmentConfig => {
     simulateWalletBalances: getEnvBool('SIMULATE_WALLET_BALANCES', false),
     useTurnkeyViemSigner: getEnvBool('USE_TURNKEY_VIEM_SIGNER', true),
     enableWalletExport: getEnvBool('ENABLE_WALLET_EXPORT', false),
+
+    // Across Protocol (cross-chain bridge)
+    acrossIntegratorId: process.env.ACROSS_INTEGRATOR_ID || '0x0000',
 
     // Test configuration (prefixed)
     testWalletPrivateKey: getEnvVar('TEST_WALLET_PRIVATE_KEY') || undefined,

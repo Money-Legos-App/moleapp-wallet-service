@@ -160,6 +160,7 @@ model Wallet {
   userOperations   UserOperation[]
   deFiBundledOperations DeFiBundledOperation[]
   turnkeySigners   TurnkeySigner[]
+  bridgeOperations BridgeOperation[]
 
   @@unique([address, chainId])
   @@map("wallets")
@@ -1754,4 +1755,47 @@ enum PositionStatus {
   OPEN
   CLOSED
   LIQUIDATED
+}
+
+// ================================
+// CROSS-CHAIN BRIDGE OPERATIONS (Across Protocol v4)
+// ================================
+
+enum BridgeOperationStatus {
+  PENDING              // UserOp submitted on origin chain
+  DEPOSIT_CONFIRMED    // Origin tx mined, waiting for Across relayer fill
+  FILLED               // Funds arrived on destination (Arbitrum)
+  REFUNDED             // Across refunded to depositor on origin chain
+  FAILED               // UserOp reverted or unrecoverable error
+}
+
+model BridgeOperation {
+  id                   String                @id @default(uuid())
+  walletId             String
+  missionId            String?               // Set when bridge is for mission activation
+  originChainId        Int
+  destinationChainId   Int
+  userOpHash           String                @unique
+  depositTxHash        String?               // Set when UserOp is mined on origin
+  fillTxHash           String?               // Set when Across relayer fills on destination
+  inputToken           String
+  outputToken          String
+  inputAmount          String
+  expectedOutputAmount String
+  outputAmount         String?               // Actual amount received after fill
+  status               BridgeOperationStatus @default(PENDING)
+  kernelAccountAddress String
+  recipientAddress     String
+  metadata             Json?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  wallet               Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("bridge_operations")
+  @@index([walletId])
+  @@index([status])
+  @@index([missionId])
+  @@index([depositTxHash])
+  @@index([createdAt])
 }

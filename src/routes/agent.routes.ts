@@ -440,4 +440,83 @@ router.post('/mission/:missionId/store-agent-key',
   agentController.storeAgentKey
 );
 
+// ============ ACROSS BRIDGE ROUTES (for mission activation) ============
+
+/**
+ * Find best source chain for a wallet (auto-detect which chain has funds).
+ * Called by agent-service during mission activation.
+ */
+router.get('/best-source-chain',
+  [
+    // query validation handled inline since express-validator query isn't imported
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      const { walletId, amount, token } = req.query;
+
+      if (!walletId || typeof walletId !== 'string') {
+        return res.status(400).json({ success: false, error: 'walletId is required' });
+      }
+
+      // Lazy import to avoid circular deps
+      const { bridgeService } = await import('../controllers/bridgeController.js');
+
+      const result = await bridgeService.findBestSourceChain(
+        walletId,
+        (amount as string) || '0',
+        (token as string) || 'USDC',
+      );
+
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('best-source-chain failed', { error: error.message });
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+/**
+ * Bridge funds to Arbitrum for mission activation via Across Protocol.
+ * Called by agent-service when source chain != Arbitrum.
+ */
+router.post('/across-bridge-to-arbitrum',
+  signingRateLimit,
+  [
+    body('missionId').isUUID().withMessage('Valid mission ID required'),
+    body('walletId').isUUID().withMessage('Valid wallet ID required'),
+    body('amount').isString().notEmpty().withMessage('Amount required'),
+    body('sourceChainId').isInt({ min: 1 }).withMessage('Valid source chain ID required'),
+    body('inputToken').isString().notEmpty().withMessage('Input token required'),
+    body('recipientAddress').matches(/^0x[a-fA-F0-9]{40}$/).withMessage('Valid recipient address required'),
+  ],
+  validateRequest,
+  async (req: Request, res: Response) => {
+    try {
+      const { missionId, walletId, amount, sourceChainId, inputToken, recipientAddress } = req.body;
+
+      const { bridgeService } = await import('../controllers/bridgeController.js');
+
+      const result = await bridgeService.bridgeForMission({
+        missionId,
+        walletId,
+        amount,
+        sourceChainId: parseInt(sourceChainId),
+        inputToken,
+        recipientAddress,
+      });
+
+      logger.info('Mission bridge initiated', {
+        missionId,
+        bridgeOperationId: result.bridgeOperationId,
+        sourceChainId,
+      });
+
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('across-bridge-to-arbitrum failed', { error: error.message });
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
 export default router;

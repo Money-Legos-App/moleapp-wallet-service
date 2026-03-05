@@ -38,10 +38,15 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package*.json ./
 
-# Create logs directory
+# Copy production startup script (runs prisma migrate deploy before starting)
+COPY start.sh ./start.sh
+
+# Create logs directory and set permissions
 RUN mkdir -p logs && \
+    chmod +x ./start.sh && \
     chown -R walletservice:nodejs . && \
     chmod -R 755 .
 
@@ -49,12 +54,12 @@ RUN mkdir -p logs && \
 USER walletservice
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
 
 # Expose port
 EXPOSE 3002
 
-# Start application with dumb-init
+# Start with schema sync then application
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["./start.sh"]
