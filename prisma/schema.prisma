@@ -1373,7 +1373,8 @@ model AgentMission {
   vaultKeyCreated     Boolean          @default(false)
   vaultKeyDestroyed   Boolean          @default(false)
 
-  // Fee tracking (populated at mission exit)
+  // Fee tracking
+  feePercent          Float            @default(30)  // Locked at mission creation time
   finalBalance        Decimal?         @db.Decimal(20,8)
   protocolFee         Decimal?         @db.Decimal(20,8)
   userPayout          Decimal?         @db.Decimal(20,8)
