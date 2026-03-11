@@ -358,29 +358,6 @@ router.post('/batch-sign-typed-data',
 );
 
 /**
- * Deposit USDC to Hyperliquid via bridge on Arbitrum Sepolia
- * Bundles approve + deposit into a single gasless UserOperation
- */
-router.post('/deposit-to-hyperliquid',
-  signingRateLimit,
-  [
-    body('missionId')
-      .isUUID()
-      .withMessage('Valid mission ID is required'),
-    body('amount')
-      .isString()
-      .notEmpty()
-      .withMessage('USDC amount is required'),
-    body('chainId')
-      .optional()
-      .isInt()
-      .withMessage('Chain ID must be an integer')
-  ],
-  validateRequest,
-  agentController.depositToHyperliquid
-);
-
-/**
  * Sign a withdrawal from Hyperliquid back to user's smart wallet
  * Uses the master EOA (Turnkey) to sign the withdrawal request
  */
@@ -397,28 +374,6 @@ router.post('/withdraw-from-hyperliquid',
   ],
   validateRequest,
   agentController.withdrawFromHyperliquid
-);
-
-/**
- * Transfer USDC from user's ZeroDev wallet to per-mission Master EOA on Arbitrum.
- * Executes as a gasless UserOperation via Pimlico paymaster.
- */
-router.post('/transfer-to-master-eoa',
-  signingRateLimit,
-  [
-    body('missionId')
-      .isUUID()
-      .withMessage('Valid mission ID is required'),
-    body('masterEoaAddress')
-      .matches(/^0x[a-fA-F0-9]{40}$/)
-      .withMessage('Valid Ethereum address is required for Master EOA'),
-    body('amount')
-      .isString()
-      .notEmpty()
-      .withMessage('USDC amount is required')
-  ],
-  validateRequest,
-  agentController.transferToMasterEoa
 );
 
 /**
@@ -476,10 +431,43 @@ router.get('/best-source-chain',
 );
 
 /**
- * Bridge funds to Arbitrum for mission activation via Across Protocol.
- * Called by agent-service when source chain != Arbitrum.
+ * Find optimal source chain(s) for bridging — supports multi-chain sweep.
+ * Returns exact per-chain pull amounts when no single chain has enough.
+ * Called by agent-service during mission activation.
  */
-router.post('/across-bridge-to-arbitrum',
+router.get('/find-source-chains',
+  async (req: Request, res: Response) => {
+    try {
+      const { walletId, amount, token } = req.query;
+
+      if (!walletId || typeof walletId !== 'string') {
+        return res.status(400).json({ success: false, error: 'walletId is required' });
+      }
+      if (!amount || typeof amount !== 'string') {
+        return res.status(400).json({ success: false, error: 'amount is required' });
+      }
+
+      const { bridgeService } = await import('../controllers/bridgeController.js');
+
+      const result = await bridgeService.findSourceChains(
+        walletId,
+        amount,
+        (token as string) || 'USDC',
+      );
+
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('find-source-chains failed', { error: error.message });
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+/**
+ * Bridge funds directly to Hyperliquid via Across Protocol (HyperEVM → HyperCore).
+ * Called by agent-service during mission activation. Recipient = Master EOA.
+ */
+router.post('/across-bridge-to-hyperliquid',
   signingRateLimit,
   [
     body('missionId').isUUID().withMessage('Valid mission ID required'),
@@ -513,7 +501,7 @@ router.post('/across-bridge-to-arbitrum',
 
       return res.json({ success: true, data: result });
     } catch (error: any) {
-      logger.error('across-bridge-to-arbitrum failed', { error: error.message });
+      logger.error('across-bridge-to-hyperliquid failed', { error: error.message });
       return res.status(500).json({ success: false, error: error.message });
     }
   }

@@ -1381,6 +1381,9 @@ model AgentMission {
   feeCollectedAt      DateTime?
   payoutCompletedAt   DateTime?
 
+  // LLM provider assignment (competition: "deepseek" or "qwen")
+  llmProvider         String           @default("deepseek")
+
   // Mission configuration
   strategy            StrategyType     @default(SHORT_TERM_30D)
   riskLevel           AgentRiskLevel   @default(MODERATE)
@@ -1407,6 +1410,7 @@ model AgentMission {
   totalTrades         Int              @default(0)
   winRate             Float            @default(0)
   maxDrawdown         Float            @default(0)
+  peakAccountValue    Decimal?         @db.Decimal(20,8) // High-water mark for peak-to-trough drawdown
 
   // Flexible metadata (deposit tracking, bridge tx hashes, etc.)
   metadata            Json?            @default("{}")
@@ -1431,7 +1435,10 @@ model AgentSignal {
   id                  String           @id @default(uuid())
   signalId            String           @unique
 
-  // Strategy Object from DeepSeek
+  // LLM provider that generated this signal
+  llmProvider         String           @default("deepseek")
+
+  // Strategy Object from LLM
   direction           TradeDirection
   asset               String
   confidence          ConfidenceLevel
@@ -1455,9 +1462,13 @@ model AgentSignal {
   ordersGenerated     Int              @default(0)
   ordersExecuted      Int              @default(0)
 
+  // LLM performance tracking
+  responseTimeMs      Int?
+
   @@index([generatedAt])
   @@index([asset, direction])
   @@index([isProcessed, expiresAt])
+  @@index([llmProvider])
   @@map("agent_signals")
 }
 
@@ -1719,6 +1730,7 @@ enum MorphoTransactionStatus {
 // Agent Service Enums
 enum MissionStatus {
   PENDING
+  FUNDING      // Cross-chain sweep in progress — waiting for all bridges to arrive
   DEPOSITING
   APPROVING    // @deprecated — kept for backward compat; new flow skips this state
   ACTIVE

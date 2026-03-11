@@ -1,10 +1,13 @@
 /**
  * Across Bridge Service
- * Cross-chain bridge to Arbitrum via Across Protocol v4.
+ * Cross-chain bridge to Hyperliquid via Across Protocol v4.
+ * Routes USDC from any supported chain directly to HyperEVM (chain 999),
+ * which auto-settles on HyperCore as USDH for instant trading.
+ *
  * Supports both on-demand bridge and mission activation flows.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { Address, Hex } from 'viem';
 import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger.js';
@@ -27,7 +30,12 @@ const SUPPORTED_SOURCE_CHAINS = developmentMode
   ? [421614, 11155111, 84532]                        // Arbitrum Sepolia, Sepolia, Base Sepolia
   : [42161, 1, 8453, 10, 137];                       // Arbitrum, Ethereum, Base, Optimism, Polygon
 
-const DESTINATION_CHAIN_ID = developmentMode ? 421614 : 42161;
+// HyperEVM: chain 999 (mainnet), 998 (testnet)
+// Across fills on HyperEVM → auto-routed to HyperCore as USDH
+const DESTINATION_CHAIN_ID = developmentMode ? 998 : 999;
+
+// Across enforces minimum bridge amounts (~$1-5 depending on relayer conditions)
+const ACROSS_MIN_BRIDGE_AMOUNT = 5_000_000n; // 5 USDC in 6-decimal wei
 
 // Token addresses per chain (native ETH uses sentinel address)
 const TOKEN_ADDRESSES: Record<number, Record<string, string>> = {
@@ -37,7 +45,10 @@ const TOKEN_ADDRESSES: Record<number, Record<string, string>> = {
   8453:  { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
   10:    { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85' },
   137:   { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
-  // Testnet
+  // HyperEVM (destination chains — Across resolves USDC→USDH automatically)
+  999:  { USDC: '0x078d782b760474a361dda0af3839290b0EF57AD6' },  // HyperEVM mainnet
+  998:  { USDC: '0x078d782b760474a361dda0af3839290b0EF57AD6' },  // HyperEVM testnet
+  // Testnet (source chains)
   11155111: { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' },
   421614:   { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x1baAbB04529D43a73232B713C0FE471f7c7334d5' },
   84532:    { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
@@ -61,7 +72,7 @@ export class AcrossBridgeService {
   }
 
   /**
-   * Get bridge quote for cross-chain transfer to Arbitrum.
+   * Get bridge quote for cross-chain transfer to Hyperliquid (via HyperEVM).
    */
   async getQuote(request: BridgeQuoteRequest): Promise<BridgeQuoteResponse> {
     logger.info('Getting bridge quote', {
@@ -439,45 +450,158 @@ export class AcrossBridgeService {
 
   /**
    * Find best source chain for a given wallet + amount.
-   * Returns Arbitrum first (no bridge needed), then by fill time.
+   * Prefers: HyperEVM (no bridge) → cheapest/fastest valid chain → highest balance fallback.
+   * Backward-compatible wrapper around findSourceChains().
    */
   async findBestSourceChain(
     walletId: string,
     amount: string,
     token: string = 'USDC',
   ): Promise<{ chainId: number; balance: string; needsBridge: boolean }> {
+    const result = await this.findSourceChains(walletId, amount, token);
+    if (result.chains.length === 0) {
+      return { chainId: SUPPORTED_SOURCE_CHAINS[0], balance: '0', needsBridge: true };
+    }
+    return {
+      chainId: result.chains[0].chainId,
+      balance: result.chains[0].balance,
+      needsBridge: result.needsBridge,
+    };
+  }
+
+  /**
+   * Find optimal source chain(s) for bridging.
+   * Returns single chain when possible (cheapest/fastest that satisfies amount).
+   * Returns multiple chains with exact pull amounts when sweep is needed.
+   *
+   * Knapsack routing: pulls exact amounts per chain, minimizes dust.
+   * Respects Across minimum bridge amount (~$5 USDC).
+   */
+  async findSourceChains(
+    walletId: string,
+    amount: string,
+    token: string = 'USDC',
+  ): Promise<{
+    chains: Array<{ chainId: number; balance: string; amount: string }>;
+    needsBridge: boolean;
+    needsSweep: boolean;
+  }> {
+    const requestedWei = BigInt(Math.floor(parseFloat(amount) * 1e6)); // USDC 6 decimals
+
     // Get all kernel accounts for this wallet
     const kernelAccounts = await this.prisma.kernelAccount.findMany({
       where: { walletId },
       select: { chainId: true, address: true },
     });
 
-    // Filter to supported chains only
     const supported = kernelAccounts.filter(ka => SUPPORTED_SOURCE_CHAINS.includes(ka.chainId));
 
-    // Check Arbitrum first (no bridge needed)
-    const arbAccount = supported.find(ka => ka.chainId === DESTINATION_CHAIN_ID);
-    if (arbAccount) {
-      // TODO: Check actual on-chain balance via RPC
-      // For now, return Arbitrum as default if account exists
-      return { chainId: DESTINATION_CHAIN_ID, balance: '0', needsBridge: false };
+    // Check HyperEVM first (no bridge needed — funds already at destination)
+    const destAccount = kernelAccounts.find(ka => ka.chainId === DESTINATION_CHAIN_ID);
+    if (destAccount) {
+      const balance = await this.checkUsdcBalance(destAccount.address, DESTINATION_CHAIN_ID, token);
+      if (balance >= requestedWei) {
+        return {
+          chains: [{ chainId: DESTINATION_CHAIN_ID, balance: balance.toString(), amount: amount }],
+          needsBridge: false,
+          needsSweep: false,
+        };
+      }
     }
 
-    // Check other chains by fill time priority
-    const chainsByPriority = [...supported].sort((a, b) => {
-      return this.estimateFillTime(a.chainId) - this.estimateFillTime(b.chainId);
-    });
+    // Query all chain balances in parallel
+    const balanceResults = await Promise.all(
+      supported.map(async (ka) => ({
+        chainId: ka.chainId,
+        balance: await this.checkUsdcBalance(ka.address, ka.chainId, token),
+      }))
+    );
 
-    if (chainsByPriority.length > 0) {
+    // --- Fix 1: Pick cheapest/fastest chain that has enough ---
+    const sufficient = balanceResults
+      .filter(b => b.balance >= requestedWei)
+      .sort((a, b) => this.estimateFillTime(a.chainId) - this.estimateFillTime(b.chainId));
+
+    if (sufficient.length > 0) {
+      // Single cheapest valid chain
       return {
-        chainId: chainsByPriority[0].chainId,
-        balance: '0',
+        chains: [{
+          chainId: sufficient[0].chainId,
+          balance: sufficient[0].balance.toString(),
+          amount: amount,
+        }],
         needsBridge: true,
+        needsSweep: false,
       };
     }
 
-    // Default to Arbitrum even if no account exists (will be created)
-    return { chainId: DESTINATION_CHAIN_ID, balance: '0', needsBridge: false };
+    // --- Fix 2: Knapsack sweep across multiple chains ---
+    // Sort by balance descending to pull from largest first (minimizes dust)
+    const sorted = balanceResults
+      .filter(b => b.balance > 0n)
+      .sort((a, b) => (a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0));
+
+    const sweepChains: Array<{ chainId: number; balance: string; amount: string }> = [];
+    let remaining = requestedWei;
+
+    for (const chain of sorted) {
+      if (remaining <= 0n) break;
+
+      const pullAmount = chain.balance < remaining ? chain.balance : remaining;
+
+      // Skip if pull amount is below Across minimum bridge amount
+      if (pullAmount < ACROSS_MIN_BRIDGE_AMOUNT) {
+        logger.info('Skipping chain below minimum bridge amount', {
+          chainId: chain.chainId,
+          pullAmount: pullAmount.toString(),
+          minimum: ACROSS_MIN_BRIDGE_AMOUNT.toString(),
+        });
+        continue;
+      }
+
+      sweepChains.push({
+        chainId: chain.chainId,
+        balance: chain.balance.toString(),
+        amount: (Number(pullAmount) / 1e6).toString(), // Convert back to USDC string
+      });
+      remaining -= pullAmount;
+    }
+
+    if (remaining > 0n) {
+      const shortfall = Number(remaining) / 1e6;
+      throw new Error(
+        `Insufficient consolidatable balance. Please deposit $${shortfall.toFixed(2)} more USDC on any supported chain.`
+      );
+    }
+
+    return {
+      chains: sweepChains,
+      needsBridge: true,
+      needsSweep: sweepChains.length > 1,
+    };
+  }
+
+  /**
+   * Check on-chain ERC-20 balance via RPC.
+   */
+  private async checkUsdcBalance(address: string, chainId: number, token: string = 'USDC'): Promise<bigint> {
+    try {
+      const { createPublicClient, http, parseAbi } = await import('viem');
+      const networkConfig = (await import('../../config/networks.js')).getNetworkConfigByChainId(chainId);
+      const tokenAddress = this.resolveTokenAddress(token, chainId);
+
+      const client = createPublicClient({ chain: networkConfig.chain, transport: http(networkConfig.rpcUrl) });
+      const balance = await client.readContract({
+        address: tokenAddress as `0x${string}`,
+        abi: parseAbi(['function balanceOf(address) view returns (uint256)']),
+        functionName: 'balanceOf',
+        args: [address as `0x${string}`],
+      });
+      return balance as bigint;
+    } catch (err) {
+      logger.warn('Failed to check on-chain balance', { chainId, address, error: String(err) });
+      return 0n;
+    }
   }
 
   // ============ PRIVATE HELPERS ============
@@ -540,11 +664,12 @@ export class AcrossBridgeService {
   }
 
   private estimateFillTime(originChainId: number): number {
+    // Across → HyperEVM fill times (seconds): 8-20s typical
     const fillTimes: Record<number, number> = {
-      1: 120, 8453: 30, 10: 30, 137: 60, 56: 60,
-      11155111: 300, 421614: 30, 84532: 60,
+      42161: 15, 1: 20, 8453: 15, 10: 15, 137: 20, 56: 30,
+      421614: 15, 11155111: 30, 84532: 20,
     };
-    return fillTimes[originChainId] ?? 120;
+    return fillTimes[originChainId] ?? 20;
   }
 
   private estimateBridgeFeeUsd(amount: string, feePct: number): string {
