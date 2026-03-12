@@ -34,7 +34,7 @@ export const bridgeController = {
    */
   async getQuote(req: Request, res: Response) {
     try {
-      const { walletId, inputToken, outputToken, amount, originChainId, slippage } = req.query;
+      const { walletId, inputToken, outputToken, amount, originChainId, destinationChainId, recipient, slippage } = req.query;
 
       const quote = await bridgeService.getQuote({
         walletId: walletId as string,
@@ -42,6 +42,8 @@ export const bridgeController = {
         outputToken: (outputToken as string) || 'ETH',
         amount: amount as string,
         originChainId: parseInt(originChainId as string),
+        destinationChainId: destinationChainId ? parseInt(destinationChainId as string) : undefined,
+        recipient: recipient ? (recipient as string) : undefined,
         slippage: slippage ? parseFloat(slippage as string) : undefined,
       });
 

@@ -34,6 +34,11 @@ const SUPPORTED_SOURCE_CHAINS = developmentMode
 // Across fills on HyperEVM → auto-routed to HyperCore as USDH
 const DESTINATION_CHAIN_ID = developmentMode ? 998 : 999;
 
+// All chains valid as bridge destinations (source chains + HyperEVM)
+const SUPPORTED_DESTINATION_CHAINS = developmentMode
+  ? [421614, 11155111, 84532, 998]                            // Testnet chains + HyperEVM testnet
+  : [42161, 1, 8453, 10, 137, 999];                           // Mainnet chains + HyperEVM
+
 // Across enforces minimum bridge amounts (~$1-5 depending on relayer conditions)
 const ACROSS_MIN_BRIDGE_AMOUNT = 5_000_000n; // 5 USDC in 6-decimal wei
 
@@ -89,6 +94,16 @@ export class AcrossBridgeService {
 
     const destChainId = request.destinationChainId || DESTINATION_CHAIN_ID;
 
+    // Validate destination chain
+    if (!SUPPORTED_DESTINATION_CHAINS.includes(destChainId)) {
+      throw new Error(`BRIDGE_ROUTE_UNAVAILABLE: Destination chain ${destChainId} not supported. Supported: ${SUPPORTED_DESTINATION_CHAINS.join(', ')}`);
+    }
+
+    // Can't bridge to same chain
+    if (request.originChainId === destChainId) {
+      throw new Error('BRIDGE_ROUTE_UNAVAILABLE: Origin and destination chains must be different.');
+    }
+
     // Validate wallet
     const wallet = await this.prisma.wallet.findUnique({
       where: { id: request.walletId },
@@ -97,15 +112,27 @@ export class AcrossBridgeService {
     if (!wallet) throw new Error('WALLET_NOT_FOUND');
     if (!wallet.isActive) throw new Error('WALLET_INACTIVE');
 
-    // Resolve Kernel accounts on origin and destination
+    // Resolve Kernel account on origin (always needed for depositor)
     const kernelOrigin = await this.kernelService.getOrCreateKernelAccount(
       request.walletId,
       request.originChainId,
     );
-    const kernelDestination = await this.kernelService.getOrCreateKernelAccount(
-      request.walletId,
-      destChainId,
-    );
+
+    // Resolve recipient: custom address or own Kernel account on destination
+    let recipientAddress: string;
+    if (request.recipient) {
+      // Validate custom recipient is a valid Ethereum address
+      if (!/^0x[a-fA-F0-9]{40}$/.test(request.recipient)) {
+        throw new Error('BRIDGE_ROUTE_UNAVAILABLE: Invalid recipient address.');
+      }
+      recipientAddress = request.recipient;
+    } else {
+      const kernelDestination = await this.kernelService.getOrCreateKernelAccount(
+        request.walletId,
+        destChainId,
+      );
+      recipientAddress = kernelDestination.address;
+    }
 
     // Resolve token addresses
     const inputTokenAddress = this.resolveTokenAddress(request.inputToken, request.originChainId);
@@ -120,7 +147,7 @@ export class AcrossBridgeService {
       originChainId: request.originChainId,
       destinationChainId: destChainId,
       depositor: kernelOrigin.address,
-      recipient: kernelDestination.address,  // Always explicit, never default
+      recipient: recipientAddress,
       integratorId: process.env.ACROSS_INTEGRATOR_ID || '0x0000',
       slippage: request.slippage ?? 0.005,
     });
@@ -133,7 +160,7 @@ export class AcrossBridgeService {
       acrossResponse,
       walletId: request.walletId,
       kernelAccountAddress: kernelOrigin.address,
-      recipientAddress: kernelDestination.address,
+      recipientAddress,
       originChainId: request.originChainId,
       destinationChainId: destChainId,
       inputToken: inputTokenAddress,
@@ -152,6 +179,7 @@ export class AcrossBridgeService {
       quoteId,
       expectedOutput: acrossResponse.expectedOutputAmount,
       requiresApproval: acrossResponse.approvalTxns.length > 0,
+      recipientAddress,
     });
 
     return {
@@ -168,6 +196,7 @@ export class AcrossBridgeService {
       estimatedFillTime: this.estimateFillTime(request.originChainId),
       expiresAt,
       requiresApproval: acrossResponse.approvalTxns.length > 0,
+      recipientAddress,
     };
   }
 

@@ -1,4 +1,4 @@
-import { Chain, sepolia, arbitrumSepolia, mainnet, arbitrum, base } from 'viem/chains';
+import { Chain, sepolia, arbitrumSepolia, mainnet, arbitrum, base, optimism, polygon } from 'viem/chains';
 import { developmentMode } from './environment.js';
 
 export interface NetworkConfig {
@@ -176,6 +176,40 @@ const MAINNET_NETWORKS: Record<string, NetworkConfig> = {
     currencySymbol: 'ETH',
     isTestnet: false,
     chain: base,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+
+  // Optimism (for Across bridge)
+  'OPTIMISM': {
+    chainId: 10,
+    name: 'Optimism',
+    rpcUrl: process.env.PROD_OPTIMISM_RPC_URL || process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/10/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/10/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://optimistic.etherscan.io',
+    currencySymbol: 'ETH',
+    isTestnet: false,
+    chain: optimism,
+    chainType: 'EVM',
+    addressFormat: 'ETHEREUM',
+    curve: 'SECP256K1',
+  },
+
+  // Polygon (for Across bridge)
+  'POLYGON': {
+    chainId: 137,
+    name: 'Polygon',
+    rpcUrl: process.env.PROD_POLYGON_RPC_URL || process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+    entryPointV07: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+    paymasterUrl: `https://api.pimlico.io/v2/137/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    bundlerUrl: `https://api.pimlico.io/v2/137/rpc?apikey=${process.env.PIMLICO_API_KEY || process.env.PROD_PIMLICO_API_KEY}`,
+    explorerUrl: 'https://polygonscan.com',
+    currencySymbol: 'POL',
+    isTestnet: false,
+    chain: polygon,
     chainType: 'EVM',
     addressFormat: 'ETHEREUM',
     curve: 'SECP256K1',

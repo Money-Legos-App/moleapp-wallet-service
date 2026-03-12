@@ -35,7 +35,7 @@ export const SUPPORTED_CHAINS = developmentMode ? {
   BITCOIN: ['BITCOIN_TESTNET'] as const,
   SOLANA: ['SOLANA_DEVNET'] as const
 } : {
-  EVM: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BNB_MAINNET'] as const,
+  EVM: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'OPTIMISM', 'POLYGON', 'BNB_MAINNET'] as const,
   BITCOIN: ['BITCOIN_MAINNET'] as const,
   SOLANA: ['SOLANA_MAINNET'] as const
 };
@@ -44,6 +44,6 @@ export const CHAIN_CURVES = developmentMode ? {
   SECP256K1: ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA', 'BITCOIN_TESTNET'] as const,
   ED25519: ['SOLANA_DEVNET'] as const
 } : {
-  SECP256K1: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BNB_MAINNET', 'BITCOIN_MAINNET'] as const,
+  SECP256K1: ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'OPTIMISM', 'POLYGON', 'BNB_MAINNET', 'BITCOIN_MAINNET'] as const,
   ED25519: ['SOLANA_MAINNET'] as const
 };

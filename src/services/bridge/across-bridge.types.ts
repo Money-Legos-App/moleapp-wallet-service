@@ -11,7 +11,8 @@ export interface BridgeQuoteRequest {
   outputToken: string;        // Token symbol or address on destination chain
   amount: string;             // Amount in smallest unit (wei for ETH)
   originChainId: number;      // Source chain
-  destinationChainId?: number; // Defaults to Arbitrum
+  destinationChainId?: number; // Defaults to HyperEVM (999)
+  recipient?: string;         // Custom recipient address on destination chain (defaults to own Kernel account)
   slippage?: number;          // 0.005 = 0.5%
 }
 
@@ -21,6 +22,7 @@ export interface BridgeExecuteRequest {
   amount: string;
   originChainId: number;
   destinationChainId?: number;
+  recipient?: string;         // Custom recipient address on destination chain
 }
 
 export interface BridgeForMissionRequest {
@@ -48,6 +50,7 @@ export interface BridgeQuoteResponse {
   estimatedFillTime: number;
   expiresAt: number;
   requiresApproval: boolean;
+  recipientAddress: string;   // Address receiving funds on destination chain
 }
 
 export interface BridgeExecuteResponse {
