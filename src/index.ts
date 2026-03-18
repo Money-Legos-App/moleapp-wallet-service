@@ -15,6 +15,9 @@ import { BridgePollerService } from './services/bridge/bridge-poller.service.js'
 
 const app = express();
 
+// Trust proxy (Render load balancer forwards X-Forwarded-For)
+app.set('trust proxy', 1);
+
 // Raw body parser for webhook signature validation (must be BEFORE express.json)
 app.use('/api/v1/webhooks', express.raw({ type: 'application/json' }));
 
