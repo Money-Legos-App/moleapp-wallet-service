@@ -32,14 +32,7 @@ function bridgeError(res: Response, code: BridgeErrorCode, message: string, stat
 /** Verify the authenticated user owns the wallet. Returns null if valid, or sends 403. */
 async function verifyWalletOwnership(req: AuthenticatedRequest, res: Response, walletId: string): Promise<boolean> {
   const userId = req.userId;
-  logger.info('verifyWalletOwnership check', {
-    userId,
-    hasUserId: !!userId,
-    walletId,
-    authSubject: req.auth?.subject,
-    authClientId: req.auth?.clientId,
-    path: req.path,
-  });
+  logger.debug('verifyWalletOwnership check', { userId: !!userId, walletId });
   if (!userId) {
     bridgeError(res, 'E050', 'Authentication required.', 401);
     return false;

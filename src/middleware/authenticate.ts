@@ -43,26 +43,24 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
     const token = authHeader.substring(7);
     const tokenValidation = await keycloakAuth.validateToken(token);
 
-    logger.info('Token introspection result', {
+    logger.debug('Token introspection result', {
       active: tokenValidation.active,
       sub: tokenValidation.sub ?? '(undefined)',
-      subType: typeof tokenValidation.sub,
-      email: tokenValidation.email ?? '(undefined)',
       clientId: tokenValidation.client_id ?? '(undefined)',
       username: tokenValidation.username ?? '(undefined)',
       path: req.path,
-      method: req.method,
     });
 
     if (!tokenValidation.active) {
       return ResponseUtils.unauthorized(res, 'Invalid or expired token');
     }
 
-    // Resolve userId: prefer sub, fall back to username for user tokens
-    // (Keycloak temp-password-grant tokens may not include sub in introspection)
+    // Resolve userId: for user tokens, username IS the app's user ID (matches wallet DB).
+    // For service accounts, use sub (Keycloak internal UUID).
     const isServiceAccount = tokenValidation.username?.startsWith('service-account-');
-    const resolvedUserId = tokenValidation.sub
-      || (!isServiceAccount ? tokenValidation.username : undefined);
+    const resolvedUserId = isServiceAccount
+      ? tokenValidation.sub
+      : (tokenValidation.username || tokenValidation.sub);
 
     req.userId = resolvedUserId;
     req.userEmail = tokenValidation.email;
