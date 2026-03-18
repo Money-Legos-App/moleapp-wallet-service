@@ -54,9 +54,7 @@ export class AcrossClientService {
       destinationChainId: params.destinationChainId,
     });
 
-    const response = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const response = await fetch(url);
 
     if (!response.ok) {
       const errorBody = await response.text();
