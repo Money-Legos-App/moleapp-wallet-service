@@ -58,12 +58,18 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
       return ResponseUtils.unauthorized(res, 'Invalid or expired token');
     }
 
-    req.userId = tokenValidation.sub;
+    // Resolve userId: prefer sub, fall back to username for user tokens
+    // (Keycloak temp-password-grant tokens may not include sub in introspection)
+    const isServiceAccount = tokenValidation.username?.startsWith('service-account-');
+    const resolvedUserId = tokenValidation.sub
+      || (!isServiceAccount ? tokenValidation.username : undefined);
+
+    req.userId = resolvedUserId;
     req.userEmail = tokenValidation.email;
     req.auth = {
       clientId: tokenValidation.client_id || '',
       username: tokenValidation.username,
-      subject: tokenValidation.sub || '',
+      subject: resolvedUserId || '',
       scopes: [],
       expires: Date.now() + 3600000 // 1 hour default
     };
