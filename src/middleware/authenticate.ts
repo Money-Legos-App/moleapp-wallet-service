@@ -36,6 +36,16 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
     const token = authHeader.substring(7);
     const tokenValidation = await keycloakAuth.validateToken(token);
 
+    logger.debug('Token introspection result', {
+      active: tokenValidation.active,
+      hasSub: !!tokenValidation.sub,
+      sub: tokenValidation.sub,
+      hasEmail: !!tokenValidation.email,
+      clientId: tokenValidation.client_id,
+      path: req.path,
+      method: req.method,
+    });
+
     if (!tokenValidation.active) {
       return ResponseUtils.unauthorized(res, 'Invalid or expired token');
     }
