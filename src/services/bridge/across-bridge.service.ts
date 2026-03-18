@@ -22,6 +22,7 @@ import type {
   BridgeExecuteResponse,
   BridgeStatusResponse,
   BridgeForMissionRequest,
+  BridgeForSavingsRequest,
   CachedBridgeQuoteData,
 } from './across-bridge.types.js';
 
@@ -52,7 +53,7 @@ const TOKEN_ADDRESSES: Record<number, Record<string, string>> = {
   137:   { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
   // HyperEVM (destination chains — Across resolves USDC→USDH automatically)
   999:  { USDC: '0x078d782b760474a361dda0af3839290b0EF57AD6' },  // HyperEVM mainnet
-  998:  { USDC: '0x078d782b760474a361dda0af3839290b0EF57AD6' },  // HyperEVM testnet
+  998:  { USDC: '0x3abb5A4FC0Cb006D1Ec2bEfaB6E01C2f4C4FC278' },  // HyperEVM testnet (mock USDC)
   // Testnet (source chains)
   11155111: { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' },
   421614:   { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x1baAbB04529D43a73232B713C0FE471f7c7334d5' },
@@ -251,21 +252,13 @@ export class AcrossBridgeService {
       txValue: acrossResponse.transaction.value,
     });
 
-    // Submit gasless UserOp on origin chain
-    const userOpResult = await this.kernelService.submitUserOperation(
-      request.walletId,
-      originChainId,
-      calls,
-      true, // sponsor gas
-    );
-
-    // Record in BridgeOperation table
+    // Create DB records FIRST so we have a tracking record even if UserOp submission fails mid-flight
     const bridgeOp = await this.prisma.bridgeOperation.create({
       data: {
         walletId: request.walletId,
         originChainId,
         destinationChainId: cached.destinationChainId,
-        userOpHash: userOpResult.userOpHash,
+        userOpHash: '', // placeholder until UserOp is submitted
         inputToken: cached.inputToken,
         outputToken: cached.outputToken,
         inputAmount: request.amount,
@@ -281,53 +274,75 @@ export class AcrossBridgeService {
       },
     });
 
-    // Also record in DeFiBundledOperation for consistency
-    await this.prisma.deFiBundledOperation.create({
-      data: {
-        walletId: request.walletId,
-        chainId: originChainId,
-        userOpHash: userOpResult.userOpHash,
-        protocol: 'ACROSS_BRIDGE',
-        operations: [{
-          type: 'BRIDGE_DEPOSIT',
-          bridgeOperationId: bridgeOp.id,
-          originChainId,
-          destinationChainId: cached.destinationChainId,
-          amount: request.amount,
-          expectedOutput: acrossResponse.expectedOutputAmount,
-        }] as any,
-        callsCount: calls.length,
-        status: 'PENDING',
-        metadata: {
-          sponsoredGas: true,
-          bundlingStrategy: 'ACROSS_BRIDGE',
-          bridgeOperationId: bridgeOp.id,
+    try {
+      // Submit gasless UserOp on origin chain
+      const userOpResult = await this.kernelService.submitUserOperation(
+        request.walletId,
+        originChainId,
+        calls,
+        true, // sponsor gas
+      );
+
+      // Update bridge operation with actual UserOp hash
+      await this.prisma.bridgeOperation.update({
+        where: { id: bridgeOp.id },
+        data: { userOpHash: userOpResult.userOpHash },
+      });
+
+      // Also record in DeFiBundledOperation for consistency
+      await this.prisma.deFiBundledOperation.create({
+        data: {
+          walletId: request.walletId,
+          chainId: originChainId,
+          userOpHash: userOpResult.userOpHash,
+          protocol: 'ACROSS_BRIDGE',
+          operations: [{
+            type: 'BRIDGE_DEPOSIT',
+            bridgeOperationId: bridgeOp.id,
+            originChainId,
+            destinationChainId: cached.destinationChainId,
+            amount: request.amount,
+            expectedOutput: acrossResponse.expectedOutputAmount,
+          }] as any,
+          callsCount: calls.length,
+          status: 'PENDING',
+          metadata: {
+            sponsoredGas: true,
+            bundlingStrategy: 'ACROSS_BRIDGE',
+            bridgeOperationId: bridgeOp.id,
+          },
         },
-      },
-    });
+      });
 
-    await this.deleteCachedQuote(request.quoteId);
+      await this.deleteCachedQuote(request.quoteId);
 
-    logger.info('Bridge operation submitted', {
-      bridgeOperationId: bridgeOp.id,
-      userOpHash: userOpResult.userOpHash,
-    });
+      logger.info('Bridge operation submitted', {
+        bridgeOperationId: bridgeOp.id,
+        userOpHash: userOpResult.userOpHash,
+      });
 
-    return {
-      bridgeOperationId: bridgeOp.id,
-      userOpHash: userOpResult.userOpHash,
-      status: 'submitted',
-      originChainId,
-      destinationChainId: cached.destinationChainId,
-      inputAmount: request.amount,
-      expectedOutputAmount: acrossResponse.expectedOutputAmount,
-      sponsored: true,
-    };
+      return {
+        bridgeOperationId: bridgeOp.id,
+        userOpHash: userOpResult.userOpHash,
+        status: 'submitted',
+        originChainId,
+        destinationChainId: cached.destinationChainId,
+        inputAmount: request.amount,
+        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        sponsored: true,
+      };
+    } catch (error) {
+      // Mark the bridge operation as failed so user isn't stuck
+      await this.prisma.bridgeOperation.update({
+        where: { id: bridgeOp.id },
+        data: { status: 'FAILED' },
+      }).catch(() => {}); // don't mask original error
+      throw error;
+    }
   }
 
   /**
    * Simplified bridge for mission activation.
-   * Quotes, executes, and returns the bridge operation ID.
    */
   async bridgeForMission(request: BridgeForMissionRequest): Promise<BridgeExecuteResponse> {
     logger.info('Bridging for mission activation', {
@@ -336,36 +351,78 @@ export class AcrossBridgeService {
       amount: request.amount,
     });
 
-    if (!SUPPORTED_SOURCE_CHAINS.includes(request.sourceChainId)) {
-      throw new Error(`BRIDGE_ROUTE_UNAVAILABLE: Chain ${request.sourceChainId} not supported`);
+    return this.executeInternalBridge({
+      walletId: request.walletId,
+      sourceChainId: request.sourceChainId,
+      amount: request.amount,
+      inputToken: request.inputToken,
+      recipientAddress: request.recipientAddress,
+      missionId: request.missionId,
+      operationType: 'MISSION_BRIDGE',
+      metadata: { missionId: request.missionId },
+    });
+  }
+
+  /**
+   * Simplified bridge for savings (HLP Vault).
+   */
+  async bridgeForSavings(request: BridgeForSavingsRequest): Promise<BridgeExecuteResponse> {
+    logger.info('Bridging for savings deposit', {
+      walletId: request.walletId,
+      sourceChainId: request.sourceChainId,
+      amount: request.amount,
+    });
+
+    return this.executeInternalBridge({
+      walletId: request.walletId,
+      sourceChainId: request.sourceChainId,
+      amount: request.amount,
+      inputToken: 'USDC',
+      recipientAddress: request.recipientAddress,
+      operationType: 'SAVINGS_BRIDGE',
+      metadata: { savingsDeposit: true },
+    });
+  }
+
+  /**
+   * Shared internal bridge logic for mission and savings flows.
+   */
+  private async executeInternalBridge(params: {
+    walletId: string;
+    sourceChainId: number;
+    amount: string;
+    inputToken: string;
+    recipientAddress: string;
+    missionId?: string;
+    operationType: string;
+    metadata: Record<string, any>;
+  }): Promise<BridgeExecuteResponse> {
+    if (!SUPPORTED_SOURCE_CHAINS.includes(params.sourceChainId)) {
+      throw new Error(`BRIDGE_ROUTE_UNAVAILABLE: Chain ${params.sourceChainId} not supported`);
     }
 
-    // Resolve kernel account on origin chain
     const kernelOrigin = await this.kernelService.getOrCreateKernelAccount(
-      request.walletId,
-      request.sourceChainId,
+      params.walletId,
+      params.sourceChainId,
     );
 
-    const inputTokenAddress = this.resolveTokenAddress(request.inputToken, request.sourceChainId);
+    const inputTokenAddress = this.resolveTokenAddress(params.inputToken, params.sourceChainId);
     const outputTokenAddress = this.resolveTokenAddress('USDC', DESTINATION_CHAIN_ID);
 
-    // Get Across quote
     const acrossResponse = await this.acrossClient.getSwapApproval({
       tradeType: 'EXACT_INPUT',
-      amount: request.amount,
+      amount: params.amount,
       inputToken: inputTokenAddress,
       outputToken: outputTokenAddress,
-      originChainId: request.sourceChainId,
+      originChainId: params.sourceChainId,
       destinationChainId: DESTINATION_CHAIN_ID,
       depositor: kernelOrigin.address,
-      recipient: request.recipientAddress,  // Master EOA or Kernel on Arbitrum
+      recipient: params.recipientAddress,
       integratorId: process.env.ACROSS_INTEGRATOR_ID || '0x0000',
       slippage: 0.005,
     });
 
-    // Build calls
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
-
     for (const approval of acrossResponse.approvalTxns) {
       calls.push({
         to: approval.to as Address,
@@ -373,78 +430,88 @@ export class AcrossBridgeService {
         data: approval.data as Hex,
       });
     }
-
     calls.push({
       to: acrossResponse.transaction.to as Address,
       value: BigInt(acrossResponse.transaction.value || '0'),
       data: acrossResponse.transaction.data as Hex,
     });
 
-    // Submit UserOp
-    const userOpResult = await this.kernelService.submitUserOperation(
-      request.walletId,
-      request.sourceChainId,
-      calls,
-      true,
-    );
-
-    // Record with missionId
+    // Create DB record first for tracking
     const bridgeOp = await this.prisma.bridgeOperation.create({
       data: {
-        walletId: request.walletId,
-        missionId: request.missionId,
-        originChainId: request.sourceChainId,
+        walletId: params.walletId,
+        missionId: params.missionId,
+        originChainId: params.sourceChainId,
         destinationChainId: DESTINATION_CHAIN_ID,
-        userOpHash: userOpResult.userOpHash,
+        userOpHash: '',
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
-        inputAmount: request.amount,
+        inputAmount: params.amount,
         expectedOutputAmount: acrossResponse.expectedOutputAmount,
         status: 'PENDING',
         kernelAccountAddress: kernelOrigin.address,
-        recipientAddress: request.recipientAddress,
+        recipientAddress: params.recipientAddress,
         metadata: {
-          missionId: request.missionId,
+          ...params.metadata,
           sponsoredGas: true,
           acrossIntegratorId: process.env.ACROSS_INTEGRATOR_ID || '0x0000',
         },
       },
     });
 
-    await this.prisma.deFiBundledOperation.create({
-      data: {
-        walletId: request.walletId,
-        chainId: request.sourceChainId,
+    try {
+      const userOpResult = await this.kernelService.submitUserOperation(
+        params.walletId,
+        params.sourceChainId,
+        calls,
+        true,
+      );
+
+      await this.prisma.bridgeOperation.update({
+        where: { id: bridgeOp.id },
+        data: { userOpHash: userOpResult.userOpHash },
+      });
+
+      await this.prisma.deFiBundledOperation.create({
+        data: {
+          walletId: params.walletId,
+          chainId: params.sourceChainId,
+          userOpHash: userOpResult.userOpHash,
+          protocol: 'ACROSS_BRIDGE',
+          operations: [{
+            type: params.operationType,
+            bridgeOperationId: bridgeOp.id,
+            amount: params.amount,
+            ...(params.missionId ? { missionId: params.missionId } : {}),
+          }] as any,
+          callsCount: calls.length,
+          status: 'PENDING',
+          metadata: { sponsoredGas: true, bundlingStrategy: 'ACROSS_BRIDGE' },
+        },
+      });
+
+      logger.info(`${params.operationType} bridge submitted`, {
+        bridgeOperationId: bridgeOp.id,
         userOpHash: userOpResult.userOpHash,
-        protocol: 'ACROSS_BRIDGE',
-        operations: [{
-          type: 'MISSION_BRIDGE',
-          missionId: request.missionId,
-          bridgeOperationId: bridgeOp.id,
-          amount: request.amount,
-        }] as any,
-        callsCount: calls.length,
-        status: 'PENDING',
-        metadata: { sponsoredGas: true, bundlingStrategy: 'ACROSS_BRIDGE' },
-      },
-    });
+      });
 
-    logger.info('Mission bridge submitted', {
-      bridgeOperationId: bridgeOp.id,
-      missionId: request.missionId,
-      userOpHash: userOpResult.userOpHash,
-    });
-
-    return {
-      bridgeOperationId: bridgeOp.id,
-      userOpHash: userOpResult.userOpHash,
-      status: 'submitted',
-      originChainId: request.sourceChainId,
-      destinationChainId: DESTINATION_CHAIN_ID,
-      inputAmount: request.amount,
-      expectedOutputAmount: acrossResponse.expectedOutputAmount,
-      sponsored: true,
-    };
+      return {
+        bridgeOperationId: bridgeOp.id,
+        userOpHash: userOpResult.userOpHash,
+        status: 'submitted',
+        originChainId: params.sourceChainId,
+        destinationChainId: DESTINATION_CHAIN_ID,
+        inputAmount: params.amount,
+        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        sponsored: true,
+      };
+    } catch (error) {
+      await this.prisma.bridgeOperation.update({
+        where: { id: bridgeOp.id },
+        data: { status: 'FAILED' },
+      }).catch(() => {});
+      throw error;
+    }
   }
 
   /**
@@ -515,7 +582,10 @@ export class AcrossBridgeService {
     needsBridge: boolean;
     needsSweep: boolean;
   }> {
-    const requestedWei = BigInt(Math.floor(parseFloat(amount) * 1e6)); // USDC 6 decimals
+    // Parse amount: if already integer wei string use directly, otherwise convert from decimal USDC
+    const requestedWei = /^\d+$/.test(amount)
+      ? BigInt(amount)
+      : BigInt(Math.round(parseFloat(amount) * 1e6)); // USDC 6 decimals
 
     // Get all kernel accounts for this wallet
     const kernelAccounts = await this.prisma.kernelAccount.findMany({
@@ -591,7 +661,7 @@ export class AcrossBridgeService {
       sweepChains.push({
         chainId: chain.chainId,
         balance: chain.balance.toString(),
-        amount: (Number(pullAmount) / 1e6).toString(), // Convert back to USDC string
+        amount: pullAmount.toString(), // Keep as wei string for consistency
       });
       remaining -= pullAmount;
     }
@@ -684,9 +754,21 @@ export class AcrossBridgeService {
   }
 
   private resolveTokenAddress(tokenSymbolOrAddress: string, chainId: number): string {
-    if (tokenSymbolOrAddress.startsWith('0x')) return tokenSymbolOrAddress;
     const chainTokens = TOKEN_ADDRESSES[chainId];
     if (!chainTokens) throw new Error(`Unsupported chain: ${chainId}`);
+
+    // If an address is passed, validate it's in our allowlist for this chain
+    if (tokenSymbolOrAddress.startsWith('0x')) {
+      const normalized = tokenSymbolOrAddress.toLowerCase();
+      const isAllowed = Object.values(chainTokens).some(
+        addr => addr.toLowerCase() === normalized,
+      );
+      if (!isAllowed) {
+        throw new Error(`Token address ${tokenSymbolOrAddress} not in allowlist for chain ${chainId}`);
+      }
+      return tokenSymbolOrAddress;
+    }
+
     const address = chainTokens[tokenSymbolOrAddress.toUpperCase()];
     if (!address) throw new Error(`Token ${tokenSymbolOrAddress} not supported on chain ${chainId}`);
     return address;
@@ -702,9 +784,10 @@ export class AcrossBridgeService {
   }
 
   private estimateBridgeFeeUsd(amount: string, feePct: number): string {
-    const ethAmount = Number(BigInt(amount)) / 1e18;
-    const feeEth = ethAmount * feePct;
-    return (feeEth * 2500).toFixed(4);
+    // Amount is in USDC 6-decimal wei; USDC is dollar-denominated so no ETH price needed
+    const usdcAmount = Number(BigInt(amount)) / 1e6;
+    const feeUsd = usdcAmount * feePct;
+    return feeUsd.toFixed(4);
   }
 
   // ============ REDIS CACHE (same pattern as SwapService) ============

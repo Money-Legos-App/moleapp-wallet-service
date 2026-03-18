@@ -34,6 +34,13 @@ export interface BridgeForMissionRequest {
   recipientAddress: string;   // Master EOA or Kernel account on Arbitrum
 }
 
+export interface BridgeForSavingsRequest {
+  walletId: string;
+  amount: string;
+  sourceChainId: number;
+  recipientAddress: string;   // User's Hyperliquid L1 address
+}
+
 // ============ RESPONSE TYPES ============
 
 export interface BridgeQuoteResponse {

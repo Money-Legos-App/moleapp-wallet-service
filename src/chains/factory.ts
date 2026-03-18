@@ -137,10 +137,10 @@ export class ChainServiceFactory {
       case 'SECP256K1':
         return developmentMode
           ? ['ETH_SEPOLIA', 'ARBITRUM_SEPOLIA', 'BNB_TESTNET', 'BITCOIN_TESTNET']
-          : ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BITCOIN_MAINNET'];
+          : ['ETH_MAINNET', 'ARBITRUM_ONE', 'BASE', 'BITCOIN_TESTNET'];
 
       case 'ED25519':
-        return developmentMode ? ['SOLANA_DEVNET'] : ['SOLANA_MAINNET'];
+        return ['SOLANA_DEVNET'];
 
       default:
         return [];
@@ -168,8 +168,7 @@ export class ChainServiceFactory {
    * Check if chain is Bitcoin
    */
   private isBitcoinChain(chainKey: string): boolean {
-    const bitcoinChains: BitcoinChainKey[] = developmentMode
-      ? ['BITCOIN_TESTNET'] : ['BITCOIN_MAINNET'];
+    const bitcoinChains: BitcoinChainKey[] = ['BITCOIN_TESTNET'];
     return bitcoinChains.includes(chainKey as BitcoinChainKey);
   }
 
@@ -177,8 +176,7 @@ export class ChainServiceFactory {
    * Check if chain is Solana
    */
   private isSolanaChain(chainKey: string): boolean {
-    const solanaChains: SolanaChainKey[] = developmentMode
-      ? ['SOLANA_DEVNET'] : ['SOLANA_MAINNET'];
+    const solanaChains: SolanaChainKey[] = ['SOLANA_DEVNET'];
     return solanaChains.includes(chainKey as SolanaChainKey);
   }
 

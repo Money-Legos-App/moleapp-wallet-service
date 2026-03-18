@@ -6,7 +6,7 @@
  *   3. DEPOSIT_CONFIRMED → REFUNDED (Across refund/expiry)
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../lib/prisma';
 import { AcrossClientService } from './across-client.service.js';
 import { logger } from '../../utils/logger.js';
 

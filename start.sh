@@ -3,14 +3,16 @@ set -e
 
 echo "=== Wallet Service Production Startup ==="
 echo "Environment: ${NODE_ENV:-production}"
-echo "Port: ${PORT:-3002}"
 
-# Apply pending Prisma migrations (safe, non-destructive, idempotent)
-echo "Applying pending migrations..."
-if npx prisma migrate deploy 2>&1; then
-  echo "Migrations applied successfully."
+# Sync schema to database (additive changes only)
+# --skip-generate: client already generated at build time
+# db push is safe for additive changes (new tables, enums, columns)
+echo "Syncing Prisma schema to database..."
+if npx prisma db push --skip-generate 2>&1; then
+  echo "Schema sync complete."
 else
-  echo "WARNING: Migration failed. Starting with existing schema."
+  echo "WARNING: Schema sync failed. Starting with existing schema."
+  echo "You may need to run migrations manually if this is a breaking change."
 fi
 
 # Start the application

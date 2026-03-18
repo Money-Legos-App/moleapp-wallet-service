@@ -3,7 +3,7 @@
  * Handles cross-chain bridge operations via Across Protocol v4.
  */
 
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { KernelService } from '../services/kernel/account-abstraction.service.js';
 import { TurnkeyService } from '../services/turnkey/index.js';
@@ -12,6 +12,7 @@ import { ResponseUtils } from '../utils/responseUtils.js';
 import { logger } from '../utils/logger.js';
 import { BRIDGE_ERRORS } from '../services/bridge/across-bridge.types.js';
 import type { BridgeErrorCode } from '../services/bridge/across-bridge.types.js';
+import type { AuthenticatedRequest } from '../middleware/authenticate.js';
 
 // Module-level service instantiation (same pattern as swapController)
 const turnkeyService = new TurnkeyService(prisma);
@@ -28,18 +29,38 @@ function bridgeError(res: Response, code: BridgeErrorCode, message: string, stat
   });
 }
 
+/** Verify the authenticated user owns the wallet. Returns null if valid, or sends 403. */
+async function verifyWalletOwnership(req: AuthenticatedRequest, res: Response, walletId: string): Promise<boolean> {
+  const userId = req.userId;
+  if (!userId) {
+    bridgeError(res, 'E050', 'Authentication required.', 401);
+    return false;
+  }
+  const wallet = await prisma.wallet.findFirst({
+    where: { id: walletId, userId },
+    select: { id: true },
+  });
+  if (!wallet) {
+    bridgeError(res, 'E050', 'Wallet not found or access denied.', 403);
+    return false;
+  }
+  return true;
+}
+
 export const bridgeController = {
   /**
    * GET /api/v2/bridge/quote
    */
-  async getQuote(req: Request, res: Response) {
+  async getQuote(req: AuthenticatedRequest, res: Response) {
     try {
       const { walletId, inputToken, outputToken, amount, originChainId, destinationChainId, recipient, slippage } = req.query;
+
+      if (!await verifyWalletOwnership(req, res, walletId as string)) return;
 
       const quote = await bridgeService.getQuote({
         walletId: walletId as string,
         inputToken: inputToken as string,
-        outputToken: (outputToken as string) || 'ETH',
+        outputToken: (outputToken as string) || 'USDC',
         amount: amount as string,
         originChainId: parseInt(originChainId as string),
         destinationChainId: destinationChainId ? parseInt(destinationChainId as string) : undefined,
@@ -68,9 +89,11 @@ export const bridgeController = {
   /**
    * POST /api/v2/bridge/execute
    */
-  async executeBridge(req: Request, res: Response) {
+  async executeBridge(req: AuthenticatedRequest, res: Response) {
     try {
       const { walletId, quoteId, amount, originChainId } = req.body;
+
+      if (!await verifyWalletOwnership(req, res, walletId as string)) return;
 
       const result = await bridgeService.executeBridge({
         walletId,
@@ -99,13 +122,53 @@ export const bridgeController = {
     }
   },
 
+
+  /**
+   * POST /api/v2/bridge/savings
+   */
+  async bridgeForSavings(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { walletId, amount, sourceChainId, recipientAddress } = req.body;
+
+      if (!walletId || !amount || !sourceChainId || !recipientAddress) {
+        return bridgeError(res, 'E051', 'Missing required parameters for savings bridge', 400);
+      }
+
+      if (!await verifyWalletOwnership(req, res, walletId as string)) return;
+
+      const result = await bridgeService.bridgeForSavings({
+        walletId,
+        amount,
+        sourceChainId: parseInt(sourceChainId),
+        recipientAddress,
+      });
+
+      logger.info('Savings bridge executed', {
+        bridgeOperationId: result.bridgeOperationId,
+        userOpHash: result.userOpHash,
+      });
+
+      return ResponseUtils.success(res, result, 'Savings bridge operation submitted successfully');
+    } catch (error: any) {
+      logger.error('Savings bridge execution failed', { error: error.message });
+
+      if (error.message?.includes('BRIDGE_ROUTE_UNAVAILABLE')) {
+        return bridgeError(res, 'E054', error.message, 400);
+      }
+
+      return bridgeError(res, 'E051', error.message || 'Failed to execute savings bridge.', 500);
+    }
+  },
+
   /**
    * GET /api/v2/bridge/status/:bridgeOperationId
    */
-  async getBridgeStatus(req: Request, res: Response) {
+  async getBridgeStatus(req: AuthenticatedRequest, res: Response) {
     try {
       const { bridgeOperationId } = req.params;
       const walletId = req.query.walletId as string;
+
+      if (!await verifyWalletOwnership(req, res, walletId)) return;
 
       const status = await bridgeService.getBridgeStatus(bridgeOperationId, walletId);
       return ResponseUtils.success(res, status, 'Bridge status retrieved successfully');
@@ -123,9 +186,11 @@ export const bridgeController = {
   /**
    * GET /api/v2/bridge/history
    */
-  async listBridgeHistory(req: Request, res: Response) {
+  async listBridgeHistory(req: AuthenticatedRequest, res: Response) {
     try {
       const { walletId, limit } = req.query;
+
+      if (!await verifyWalletOwnership(req, res, walletId as string)) return;
 
       const operations = await bridgeService.listBridgeOperations(
         walletId as string,
