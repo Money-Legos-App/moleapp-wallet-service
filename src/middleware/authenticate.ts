@@ -25,6 +25,13 @@ const keycloakAuth = createKeycloakAuth({
   clientSecret: env.keycloakClientSecret,
 });
 
+logger.info('Keycloak auth config', {
+  baseURL: env.keycloakUrl,
+  realm: env.keycloakRealm,
+  clientId: env.keycloakClientId,
+  hasSecret: !!env.keycloakClientSecret,
+});
+
 // Create authentication middleware
 export const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
@@ -36,12 +43,13 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
     const token = authHeader.substring(7);
     const tokenValidation = await keycloakAuth.validateToken(token);
 
-    logger.debug('Token introspection result', {
+    logger.info('Token introspection result', {
       active: tokenValidation.active,
-      hasSub: !!tokenValidation.sub,
-      sub: tokenValidation.sub,
-      hasEmail: !!tokenValidation.email,
-      clientId: tokenValidation.client_id,
+      sub: tokenValidation.sub ?? '(undefined)',
+      subType: typeof tokenValidation.sub,
+      email: tokenValidation.email ?? '(undefined)',
+      clientId: tokenValidation.client_id ?? '(undefined)',
+      username: tokenValidation.username ?? '(undefined)',
       path: req.path,
       method: req.method,
     });
