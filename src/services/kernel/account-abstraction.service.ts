@@ -216,15 +216,16 @@ export class KernelService {
     sponsorUserOperation: boolean = true
   ) {
     try {
-      let kernelAccount = await this.getKernelAccount(walletId, chainId);
-      if (!kernelAccount) {
-        // Auto-create if missing (e.g. first bridge on this chain)
-        logger.info(`Kernel account not found for wallet ${walletId} on chain ${chainId}, auto-creating`);
-        await this.getOrCreateKernelAccount(walletId, chainId);
-        kernelAccount = await this.getKernelAccount(walletId, chainId);
-        if (!kernelAccount) {
-          throw new Error('Kernel account not found after auto-creation');
-        }
+      // Ensure kernel account exists (auto-creates if missing)
+      const { address: kernelAddress } = await this.getOrCreateKernelAccount(walletId, chainId);
+
+      // Get turnkeySubOrgId from signer table (always exists, doesn't depend on kernel_accounts row)
+      const signer = await this.prisma.turnkeySigner.findFirst({
+        where: { walletId },
+        select: { turnkeySubOrgId: true },
+      });
+      if (!signer?.turnkeySubOrgId) {
+        throw new Error(`Turnkey signer not found for wallet ${walletId}`);
       }
 
       const networkConfig = getNetworkConfigByChainId(chainId);
@@ -237,25 +238,20 @@ export class KernelService {
           chain: networkConfig.chain,
         });
         const balance = await publicClient.getBalance({
-          address: kernelAccount.address as Address,
+          address: kernelAddress,
         });
-        logger.info(`Smart account ${kernelAccount.address} balance: ${balance} wei, required: ${totalValue} wei`);
+        logger.info(`Smart account ${kernelAddress} balance: ${balance} wei, required: ${totalValue} wei`);
         if (balance < totalValue) {
           throw new Error(
-            `Insufficient balance in smart account ${kernelAccount.address}. ` +
+            `Insufficient balance in smart account ${kernelAddress}. ` +
             `Has ${balance} wei but transaction requires ${totalValue} wei. ` +
             `Please fund the smart account first.`
           );
         }
       }
 
-      // Use cached kernel account client from factory
-      if (!kernelAccount.turnkeySubOrgId) {
-        throw new Error('Kernel account missing Turnkey sub-org ID');
-      }
-
       const clientForSubmit = await this.accountFactory.getKernelAccountClient(
-        kernelAccount.turnkeySubOrgId,
+        signer.turnkeySubOrgId,
         chainId
       );
 
