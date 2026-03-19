@@ -93,7 +93,10 @@ export class AcrossBridgeService {
       throw new Error(`BRIDGE_ROUTE_UNAVAILABLE: Chain ${request.originChainId} not supported. Supported: ${SUPPORTED_SOURCE_CHAINS.join(', ')}`);
     }
 
-    const destChainId = request.destinationChainId || DESTINATION_CHAIN_ID;
+    if (!request.destinationChainId) {
+      throw new Error('BRIDGE_ROUTE_UNAVAILABLE: destinationChainId is required.');
+    }
+    const destChainId = request.destinationChainId;
 
     // Validate destination chain
     if (!SUPPORTED_DESTINATION_CHAINS.includes(destChainId)) {
@@ -173,10 +176,13 @@ export class AcrossBridgeService {
     await this.cacheQuote(quoteId, cachedData);
 
     // Parse fee info from v4 response
-    const outputAmount = acrossResponse.steps.bridge.outputAmount;
+    const approvalTxns = acrossResponse.approvalTxns ?? [];
+    const outputAmount = acrossResponse.steps?.bridge?.outputAmount
+      ?? acrossResponse.expectedOutputAmount
+      ?? request.amount;
     const inputAmountNum = parseFloat(request.amount);
     const outputAmountNum = parseFloat(outputAmount);
-    const totalFeeWei = acrossResponse.fees.total;
+    const totalFeeWei = acrossResponse.fees?.total;
     const feePctFloat = inputAmountNum > 0 ? (inputAmountNum - outputAmountNum) / inputAmountNum : 0;
 
     logger.info('Bridge quote generated', {
@@ -184,7 +190,7 @@ export class AcrossBridgeService {
       outputAmount,
       totalFee: totalFeeWei,
       expectedFillTime: acrossResponse.expectedFillTime,
-      requiresApproval: acrossResponse.approvalTxns.length > 0,
+      requiresApproval: approvalTxns.length > 0,
       recipientAddress,
     });
 
@@ -201,7 +207,7 @@ export class AcrossBridgeService {
       relayerFeePercent: (feePctFloat * 100).toFixed(4),
       estimatedFillTime: acrossResponse.expectedFillTime ?? this.estimateFillTime(request.originChainId),
       expiresAt,
-      requiresApproval: acrossResponse.approvalTxns.length > 0,
+      requiresApproval: approvalTxns.length > 0,
       recipientAddress,
     };
   }
@@ -235,7 +241,7 @@ export class AcrossBridgeService {
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
 
     // ERC-20 approval calls (empty for native ETH)
-    for (const approval of acrossResponse.approvalTxns) {
+    for (const approval of (acrossResponse.approvalTxns ?? [])) {
       calls.push({
         to: approval.to as Address,
         value: BigInt(approval.value || '0'),
@@ -251,7 +257,7 @@ export class AcrossBridgeService {
     });
 
     logger.info('Bridge calls prepared', {
-      approvalCalls: acrossResponse.approvalTxns.length,
+      approvalCalls: (acrossResponse.approvalTxns ?? []).length,
       totalCalls: calls.length,
       txTo: acrossResponse.swapTx.to,
       txValue: acrossResponse.swapTx.value,
@@ -267,7 +273,7 @@ export class AcrossBridgeService {
         inputToken: cached.inputToken,
         outputToken: cached.outputToken,
         inputAmount: request.amount,
-        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
         status: 'PENDING',
         kernelAccountAddress: cached.kernelAccountAddress,
         recipientAddress: cached.recipientAddress,
@@ -307,7 +313,7 @@ export class AcrossBridgeService {
             originChainId,
             destinationChainId: cached.destinationChainId,
             amount: request.amount,
-            expectedOutput: acrossResponse.steps.bridge.outputAmount,
+            expectedOutput: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
           }] as any,
           callsCount: calls.length,
           status: 'PENDING',
@@ -333,7 +339,7 @@ export class AcrossBridgeService {
         originChainId,
         destinationChainId: cached.destinationChainId,
         inputAmount: request.amount,
-        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
         sponsored: true,
       };
     } catch (error) {
@@ -428,7 +434,7 @@ export class AcrossBridgeService {
     });
 
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
-    for (const approval of acrossResponse.approvalTxns) {
+    for (const approval of (acrossResponse.approvalTxns ?? [])) {
       calls.push({
         to: approval.to as Address,
         value: BigInt(approval.value || '0'),
@@ -452,7 +458,7 @@ export class AcrossBridgeService {
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
         inputAmount: params.amount,
-        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
         status: 'PENDING',
         kernelAccountAddress: kernelOrigin.address,
         recipientAddress: params.recipientAddress,
@@ -507,7 +513,7 @@ export class AcrossBridgeService {
         originChainId: params.sourceChainId,
         destinationChainId: DESTINATION_CHAIN_ID,
         inputAmount: params.amount,
-        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
         sponsored: true,
       };
     } catch (error) {

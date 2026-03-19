@@ -11,7 +11,7 @@ export interface BridgeQuoteRequest {
   outputToken: string;        // Token symbol or address on destination chain
   amount: string;             // Amount in smallest unit (wei for ETH)
   originChainId: number;      // Source chain
-  destinationChainId?: number; // Defaults to HyperEVM (999)
+  destinationChainId: number;  // Required — caller must specify destination chain
   recipient?: string;         // Custom recipient address on destination chain (defaults to own Kernel account)
   slippage?: number;          // 0.005 = 0.5%
 }
@@ -120,22 +120,23 @@ export interface AcrossSwapTx {
 
 export interface AcrossSwapApprovalResponse {
   crossSwapType: string;
-  checks: {
+  checks?: {
     allowance: { token: string; spender: string; actual: string; expected: string };
     balance: { token: string; actual: string; expected: string };
   };
-  approvalTxns: AcrossApprovalTxn[];
+  approvalTxns?: AcrossApprovalTxn[];
   swapTx: AcrossSwapTx;
-  steps: {
-    bridge: { inputAmount: string; outputAmount: string };
+  steps?: {
+    bridge?: { inputAmount: string; outputAmount: string };
   };
-  fees: {
+  fees?: {
     total: string;
     totalMax: string;
     originGas: string;
   };
-  expectedFillTime: number;
-  quoteExpiryTimestamp: number;
+  expectedOutputAmount?: string;
+  expectedFillTime?: number;
+  quoteExpiryTimestamp?: number;
 }
 
 export interface AcrossDepositStatusResponse {
