@@ -284,40 +284,29 @@ export class KernelAccountFactory {
     ownerAddress: Address
   ): Promise<void> {
     try {
-      // Check if record exists for this specific wallet + chain combination
-      const existingByWalletChain = await this.prisma.kernelAccount.findFirst({
-        where: { walletId, chainId }
+      // Use upsert keyed on the actual unique constraint (address + chainId)
+      // to avoid race conditions when concurrent requests create the same account
+      await this.prisma.kernelAccount.upsert({
+        where: {
+          address_chainId: { address: accountAddress, chainId }
+        },
+        update: {
+          isDeployed,
+          signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
+          updatedAt: new Date()
+        },
+        create: {
+          walletId,
+          userId,
+          address: accountAddress,
+          ownerAddress,
+          chainId,
+          turnkeySubOrgId,
+          isDeployed,
+          signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
+        }
       });
-
-      if (existingByWalletChain) {
-        // Update existing record for this wallet/chain
-        await this.prisma.kernelAccount.update({
-          where: { id: existingByWalletChain.id },
-          data: {
-            address: accountAddress,
-            isDeployed,
-            signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
-            updatedAt: new Date()
-          }
-        });
-        logger.info(`Updated existing kernel account for wallet ${walletId} on chain ${chainId}`);
-      } else {
-        // Create new record for this wallet/chain
-        // The same Kernel address is expected across multiple EVM chains
-        await this.prisma.kernelAccount.create({
-          data: {
-            walletId,
-            userId,
-            address: accountAddress,
-            ownerAddress,
-            chainId,
-            turnkeySubOrgId,
-            isDeployed,
-            signerVersion: env.useTurnkeyViemSigner ? 1 : 0,
-          }
-        });
-        logger.info(`Created new kernel account ${accountAddress} for wallet ${walletId} on chain ${chainId}`);
-      }
+      logger.info(`Saved kernel account ${accountAddress} for wallet ${walletId} on chain ${chainId}`);
     } catch (error) {
       logger.error('Failed to save kernel account to database:', error);
       // Don't throw - this is not critical for the wallet creation flow
