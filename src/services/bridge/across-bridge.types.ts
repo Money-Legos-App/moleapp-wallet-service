@@ -101,28 +101,45 @@ export interface AcrossSwapApprovalParams {
 }
 
 export interface AcrossApprovalTxn {
+  chainId?: number;
   to: string;
   data: string;
-  value: string;
+  value?: string;
 }
 
-export interface AcrossTransaction {
+export interface AcrossSwapTx {
+  simulationSuccess?: boolean;
+  chainId?: number;
   to: string;
   data: string;
   value: string;
+  gas?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
 }
 
 export interface AcrossSwapApprovalResponse {
+  crossSwapType?: string;
   approvalTxns: AcrossApprovalTxn[];
-  transaction: AcrossTransaction;       // Main bridge deposit tx
-  fees: {
-    totalRelayFee: { pct: string; total: string };
-    relayerCapitalFee: { pct: string; total: string };
-    relayerGasFee: { pct: string; total: string };
-    lpFee: { pct: string; total: string };
+  swapTx: AcrossSwapTx;                 // Main bridge deposit tx (was 'transaction' in v3)
+  steps?: {
+    bridge?: { inputAmount: string; outputAmount: string };
   };
-  expectedOutputAmount: string;
-  minExpectedOutputAmount: string;
+  fees: {
+    total?: string;
+    totalMax?: string;
+    originGas?: string;
+    // Legacy fields (may still appear)
+    totalRelayFee?: { pct: string; total: string };
+    relayerCapitalFee?: { pct: string; total: string };
+    relayerGasFee?: { pct: string; total: string };
+    lpFee?: { pct: string; total: string };
+  };
+  expectedFillTime?: number;
+  quoteExpiryTimestamp?: number;
+  // Legacy fields kept for compatibility
+  expectedOutputAmount?: string;
+  minExpectedOutputAmount?: string;
   depositId?: string;
 }
 

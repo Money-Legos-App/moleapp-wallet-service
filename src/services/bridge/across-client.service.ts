@@ -70,6 +70,25 @@ export class AcrossClientService {
     }
 
     const data = await response.json();
+
+    logger.info('Across /swap/approval response keys', {
+      keys: Object.keys(data),
+      hasSwapTx: !!data.swapTx,
+      hasTransaction: !!data.transaction,
+      hasSteps: !!data.steps,
+      feesKeys: data.fees ? Object.keys(data.fees) : [],
+    });
+
+    // Normalize: support both old 'transaction' and new 'swapTx' field names
+    if (!data.swapTx && data.transaction) {
+      data.swapTx = data.transaction;
+    }
+
+    // Normalize: support both old 'expectedOutputAmount' and new 'steps.bridge.outputAmount'
+    if (!data.expectedOutputAmount && data.steps?.bridge?.outputAmount) {
+      data.expectedOutputAmount = data.steps.bridge.outputAmount;
+    }
+
     return data as AcrossSwapApprovalResponse;
   }
 

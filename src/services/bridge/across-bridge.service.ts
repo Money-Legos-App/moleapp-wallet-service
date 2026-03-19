@@ -173,7 +173,9 @@ export class AcrossBridgeService {
     await this.cacheQuote(quoteId, cachedData);
 
     // Parse fee info
-    const totalFeePct = acrossResponse.fees?.totalRelayFee?.pct || '0';
+    // Handle both old (totalRelayFee.pct in wei) and new (total in wei string) fee formats
+    const totalFeePct = acrossResponse.fees?.totalRelayFee?.pct
+      || acrossResponse.fees?.total || '0';
     const feePctFloat = parseFloat(totalFeePct) / 1e18;
 
     logger.info('Bridge quote generated', {
@@ -240,16 +242,16 @@ export class AcrossBridgeService {
 
     // Main bridge deposit call (uses `transaction` field from Across response)
     calls.push({
-      to: acrossResponse.transaction.to as Address,
-      value: BigInt(acrossResponse.transaction.value || '0'),
-      data: acrossResponse.transaction.data as Hex,
+      to: acrossResponse.swapTx.to as Address,
+      value: BigInt(acrossResponse.swapTx.value || '0'),
+      data: acrossResponse.swapTx.data as Hex,
     });
 
     logger.info('Bridge calls prepared', {
       approvalCalls: acrossResponse.approvalTxns.length,
       totalCalls: calls.length,
-      txTo: acrossResponse.transaction.to,
-      txValue: acrossResponse.transaction.value,
+      txTo: acrossResponse.swapTx.to,
+      txValue: acrossResponse.swapTx.value,
     });
 
     // Create DB records FIRST so we have a tracking record even if UserOp submission fails mid-flight
@@ -431,9 +433,9 @@ export class AcrossBridgeService {
       });
     }
     calls.push({
-      to: acrossResponse.transaction.to as Address,
-      value: BigInt(acrossResponse.transaction.value || '0'),
-      data: acrossResponse.transaction.data as Hex,
+      to: acrossResponse.swapTx.to as Address,
+      value: BigInt(acrossResponse.swapTx.value || '0'),
+      data: acrossResponse.swapTx.data as Hex,
     });
 
     // Create DB record first for tracking
