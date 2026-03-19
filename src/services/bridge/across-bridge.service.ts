@@ -141,7 +141,7 @@ export class AcrossBridgeService {
 
     // Call Across /swap/approval
     const acrossResponse = await this.acrossClient.getSwapApproval({
-      tradeType: 'EXACT_INPUT',
+      tradeType: 'exactInput',
       amount: request.amount,
       inputToken: inputTokenAddress,
       outputToken: outputTokenAddress,
@@ -410,7 +410,7 @@ export class AcrossBridgeService {
     const outputTokenAddress = this.resolveTokenAddress('USDC', DESTINATION_CHAIN_ID);
 
     const acrossResponse = await this.acrossClient.getSwapApproval({
-      tradeType: 'EXACT_INPUT',
+      tradeType: 'exactInput',
       amount: params.amount,
       inputToken: inputTokenAddress,
       outputToken: outputTokenAddress,

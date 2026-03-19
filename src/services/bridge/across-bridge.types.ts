@@ -88,7 +88,7 @@ export interface BridgeStatusResponse {
 // ============ ACROSS API TYPES ============
 
 export interface AcrossSwapApprovalParams {
-  tradeType: 'EXACT_INPUT';
+  tradeType: 'exactInput' | 'minOutput' | 'exactOutput';
   amount: string;
   inputToken: string;
   outputToken: string;
