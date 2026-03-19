@@ -56,6 +56,10 @@ export const bridgeController = {
     try {
       const { walletId, inputToken, outputToken, amount, originChainId, destinationChainId, recipient, slippage } = req.query;
 
+      if (!destinationChainId) {
+        return bridgeError(res, 'E054', 'destinationChainId is required.', 400);
+      }
+
       if (!await verifyWalletOwnership(req, res, walletId as string)) return;
 
       const quote = await bridgeService.getQuote({
@@ -64,7 +68,7 @@ export const bridgeController = {
         outputToken: (outputToken as string) || 'USDC',
         amount: amount as string,
         originChainId: parseInt(originChainId as string),
-        destinationChainId: destinationChainId ? parseInt(destinationChainId as string) : undefined,
+        destinationChainId: parseInt(destinationChainId as string),
         recipient: recipient ? (recipient as string) : undefined,
         slippage: slippage ? parseFloat(slippage as string) : undefined,
       });

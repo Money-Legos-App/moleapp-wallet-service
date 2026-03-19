@@ -216,9 +216,15 @@ export class KernelService {
     sponsorUserOperation: boolean = true
   ) {
     try {
-      const kernelAccount = await this.getKernelAccount(walletId, chainId);
+      let kernelAccount = await this.getKernelAccount(walletId, chainId);
       if (!kernelAccount) {
-        throw new Error('Kernel account not found');
+        // Auto-create if missing (e.g. first bridge on this chain)
+        logger.info(`Kernel account not found for wallet ${walletId} on chain ${chainId}, auto-creating`);
+        await this.getOrCreateKernelAccount(walletId, chainId);
+        kernelAccount = await this.getKernelAccount(walletId, chainId);
+        if (!kernelAccount) {
+          throw new Error('Kernel account not found after auto-creation');
+        }
       }
 
       const networkConfig = getNetworkConfigByChainId(chainId);

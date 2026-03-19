@@ -269,7 +269,7 @@ export class AcrossBridgeService {
         walletId: request.walletId,
         originChainId,
         destinationChainId: cached.destinationChainId,
-        userOpHash: '', // placeholder until UserOp is submitted
+        userOpHash: `pending-${randomUUID()}`, // unique placeholder until UserOp is submitted
         inputToken: cached.inputToken,
         outputToken: cached.outputToken,
         inputAmount: request.amount,
@@ -454,7 +454,7 @@ export class AcrossBridgeService {
         missionId: params.missionId,
         originChainId: params.sourceChainId,
         destinationChainId: DESTINATION_CHAIN_ID,
-        userOpHash: '',
+        userOpHash: `pending-${randomUUID()}`,
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
         inputAmount: params.amount,
