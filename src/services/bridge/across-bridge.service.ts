@@ -723,16 +723,16 @@ export class AcrossBridgeService {
         op.originChainId,
       );
 
-      if (acrossStatus.status === 'filled' && acrossStatus.fillTxHash) {
+      if (acrossStatus.status === 'filled' && acrossStatus.fillTx) {
         await this.prisma.bridgeOperation.update({
           where: { id: op.id },
           data: {
             status: 'FILLED',
-            fillTxHash: acrossStatus.fillTxHash,
+            fillTxHash: acrossStatus.fillTx,
             outputAmount: acrossStatus.outputAmount,
           },
         });
-        logger.info('Bridge operation filled', { bridgeOperationId: op.id, fillTxHash: acrossStatus.fillTxHash });
+        logger.info('Bridge operation filled', { bridgeOperationId: op.id, fillTxHash: acrossStatus.fillTx });
       } else if (acrossStatus.status === 'expired') {
         await this.prisma.bridgeOperation.update({
           where: { id: op.id },

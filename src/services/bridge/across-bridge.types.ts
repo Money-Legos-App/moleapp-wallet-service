@@ -141,7 +141,8 @@ export interface AcrossSwapApprovalResponse {
 
 export interface AcrossDepositStatusResponse {
   status: 'pending' | 'filled' | 'expired';
-  fillTxHash?: string;
+  /** Across v4 API returns `fillTx` (not `fillTxHash`) */
+  fillTx?: string;
   outputAmount?: string;
 }
 

@@ -111,18 +111,18 @@ export class BridgePollerService {
           op.originChainId,
         );
 
-        if (acrossStatus.status === 'filled' && acrossStatus.fillTxHash) {
+        if (acrossStatus.status === 'filled' && acrossStatus.fillTx) {
           await this.prisma.bridgeOperation.update({
             where: { id: op.id },
             data: {
               status: 'FILLED',
-              fillTxHash: acrossStatus.fillTxHash,
+              fillTxHash: acrossStatus.fillTx,
               outputAmount: acrossStatus.outputAmount,
             },
           });
           logger.info('Bridge op: DEPOSIT_CONFIRMED → FILLED', {
             bridgeOperationId: op.id,
-            fillTxHash: acrossStatus.fillTxHash,
+            fillTxHash: acrossStatus.fillTx,
             missionId: op.missionId,
           });
         } else if (acrossStatus.status === 'expired') {
