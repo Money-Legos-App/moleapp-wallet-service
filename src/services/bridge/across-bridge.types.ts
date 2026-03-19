@@ -119,28 +119,23 @@ export interface AcrossSwapTx {
 }
 
 export interface AcrossSwapApprovalResponse {
-  crossSwapType?: string;
+  crossSwapType: string;
+  checks: {
+    allowance: { token: string; spender: string; actual: string; expected: string };
+    balance: { token: string; actual: string; expected: string };
+  };
   approvalTxns: AcrossApprovalTxn[];
-  swapTx: AcrossSwapTx;                 // Main bridge deposit tx (was 'transaction' in v3)
-  steps?: {
-    bridge?: { inputAmount: string; outputAmount: string };
+  swapTx: AcrossSwapTx;
+  steps: {
+    bridge: { inputAmount: string; outputAmount: string };
   };
   fees: {
-    total?: string;
-    totalMax?: string;
-    originGas?: string;
-    // Legacy fields (may still appear)
-    totalRelayFee?: { pct: string; total: string };
-    relayerCapitalFee?: { pct: string; total: string };
-    relayerGasFee?: { pct: string; total: string };
-    lpFee?: { pct: string; total: string };
+    total: string;
+    totalMax: string;
+    originGas: string;
   };
-  expectedFillTime?: number;
-  quoteExpiryTimestamp?: number;
-  // Legacy fields kept for compatibility
-  expectedOutputAmount?: string;
-  minExpectedOutputAmount?: string;
-  depositId?: string;
+  expectedFillTime: number;
+  quoteExpiryTimestamp: number;
 }
 
 export interface AcrossDepositStatusResponse {

@@ -69,27 +69,17 @@ export class AcrossClientService {
       throw new Error(`Across API error ${response.status}: ${errorBody}`);
     }
 
-    const data = await response.json();
+    const data: AcrossSwapApprovalResponse = await response.json();
 
-    logger.info('Across /swap/approval response keys', {
-      keys: Object.keys(data),
+    logger.info('Across /swap/approval response', {
+      crossSwapType: data.crossSwapType,
       hasSwapTx: !!data.swapTx,
-      hasTransaction: !!data.transaction,
-      hasSteps: !!data.steps,
-      feesKeys: data.fees ? Object.keys(data.fees) : [],
+      outputAmount: data.steps?.bridge?.outputAmount,
+      expectedFillTime: data.expectedFillTime,
+      simulationSuccess: data.swapTx?.simulationSuccess,
     });
 
-    // Normalize: support both old 'transaction' and new 'swapTx' field names
-    if (!data.swapTx && data.transaction) {
-      data.swapTx = data.transaction;
-    }
-
-    // Normalize: support both old 'expectedOutputAmount' and new 'steps.bridge.outputAmount'
-    if (!data.expectedOutputAmount && data.steps?.bridge?.outputAmount) {
-      data.expectedOutputAmount = data.steps.bridge.outputAmount;
-    }
-
-    return data as AcrossSwapApprovalResponse;
+    return data;
   }
 
   /**

@@ -172,15 +172,18 @@ export class AcrossBridgeService {
 
     await this.cacheQuote(quoteId, cachedData);
 
-    // Parse fee info
-    // Handle both old (totalRelayFee.pct in wei) and new (total in wei string) fee formats
-    const totalFeePct = acrossResponse.fees?.totalRelayFee?.pct
-      || acrossResponse.fees?.total || '0';
-    const feePctFloat = parseFloat(totalFeePct) / 1e18;
+    // Parse fee info from v4 response
+    const outputAmount = acrossResponse.steps.bridge.outputAmount;
+    const inputAmountNum = parseFloat(request.amount);
+    const outputAmountNum = parseFloat(outputAmount);
+    const totalFeeWei = acrossResponse.fees.total;
+    const feePctFloat = inputAmountNum > 0 ? (inputAmountNum - outputAmountNum) / inputAmountNum : 0;
 
     logger.info('Bridge quote generated', {
       quoteId,
-      expectedOutput: acrossResponse.expectedOutputAmount,
+      outputAmount,
+      totalFee: totalFeeWei,
+      expectedFillTime: acrossResponse.expectedFillTime,
       requiresApproval: acrossResponse.approvalTxns.length > 0,
       recipientAddress,
     });
@@ -192,11 +195,11 @@ export class AcrossBridgeService {
       inputToken: inputTokenAddress,
       outputToken: outputTokenAddress,
       inputAmount: request.amount,
-      expectedOutputAmount: acrossResponse.expectedOutputAmount,
-      minOutputAmount: acrossResponse.minExpectedOutputAmount,
+      expectedOutputAmount: outputAmount,
+      minOutputAmount: outputAmount, // v4 uses exactInput, output is guaranteed
       bridgeFeeUsd: this.estimateBridgeFeeUsd(request.amount, feePctFloat),
       relayerFeePercent: (feePctFloat * 100).toFixed(4),
-      estimatedFillTime: this.estimateFillTime(request.originChainId),
+      estimatedFillTime: acrossResponse.expectedFillTime ?? this.estimateFillTime(request.originChainId),
       expiresAt,
       requiresApproval: acrossResponse.approvalTxns.length > 0,
       recipientAddress,
@@ -264,7 +267,7 @@ export class AcrossBridgeService {
         inputToken: cached.inputToken,
         outputToken: cached.outputToken,
         inputAmount: request.amount,
-        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
         status: 'PENDING',
         kernelAccountAddress: cached.kernelAccountAddress,
         recipientAddress: cached.recipientAddress,
@@ -304,7 +307,7 @@ export class AcrossBridgeService {
             originChainId,
             destinationChainId: cached.destinationChainId,
             amount: request.amount,
-            expectedOutput: acrossResponse.expectedOutputAmount,
+            expectedOutput: acrossResponse.steps.bridge.outputAmount,
           }] as any,
           callsCount: calls.length,
           status: 'PENDING',
@@ -330,7 +333,7 @@ export class AcrossBridgeService {
         originChainId,
         destinationChainId: cached.destinationChainId,
         inputAmount: request.amount,
-        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
         sponsored: true,
       };
     } catch (error) {
@@ -449,7 +452,7 @@ export class AcrossBridgeService {
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
         inputAmount: params.amount,
-        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
         status: 'PENDING',
         kernelAccountAddress: kernelOrigin.address,
         recipientAddress: params.recipientAddress,
@@ -504,7 +507,7 @@ export class AcrossBridgeService {
         originChainId: params.sourceChainId,
         destinationChainId: DESTINATION_CHAIN_ID,
         inputAmount: params.amount,
-        expectedOutputAmount: acrossResponse.expectedOutputAmount,
+        expectedOutputAmount: acrossResponse.steps.bridge.outputAmount,
         sponsored: true,
       };
     } catch (error) {
