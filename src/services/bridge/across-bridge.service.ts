@@ -273,7 +273,7 @@ export class AcrossBridgeService {
         inputToken: cached.inputToken,
         outputToken: cached.outputToken,
         inputAmount: request.amount,
-        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0'),
         status: 'PENDING',
         kernelAccountAddress: cached.kernelAccountAddress,
         recipientAddress: cached.recipientAddress,
@@ -339,7 +339,7 @@ export class AcrossBridgeService {
         originChainId,
         destinationChainId: cached.destinationChainId,
         inputAmount: request.amount,
-        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0'),
         sponsored: true,
       };
     } catch (error) {
@@ -460,7 +460,7 @@ export class AcrossBridgeService {
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
         inputAmount: params.amount,
-        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0'),
         status: 'PENDING',
         kernelAccountAddress: kernelOrigin.address,
         recipientAddress: params.recipientAddress,
@@ -515,7 +515,7 @@ export class AcrossBridgeService {
         originChainId: params.sourceChainId,
         destinationChainId: DESTINATION_CHAIN_ID,
         inputAmount: params.amount,
-        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount),
+        expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0'),
         sponsored: true,
       };
     } catch (error) {
