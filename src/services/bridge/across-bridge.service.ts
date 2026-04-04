@@ -52,7 +52,7 @@ const TOKEN_ADDRESSES: Record<number, Record<string, string>> = {
   10:    { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85' },
   137:   { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
   // HyperEVM (destination chains — Across resolves USDC→USDH automatically)
-  999:  { USDC: '0x078d782b760474a361dda0af3839290b0EF57AD6' },  // HyperEVM mainnet
+  999:  { USDC: '0xb88339CB7199b77E23DB6E890353E22632Ba630f' },  // HyperEVM mainnet (from Across available-routes)
   998:  { USDC: '0x3abb5A4FC0Cb006D1Ec2bEfaB6E01C2f4C4FC278' },  // HyperEVM testnet (mock USDC)
   // Testnet (source chains)
   11155111: { ETH: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', USDC: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' },
@@ -418,9 +418,7 @@ export class AcrossBridgeService {
     );
 
     const inputTokenAddress = this.resolveTokenAddress(params.inputToken, params.sourceChainId);
-    // For HyperEVM: omit outputToken — Across auto-resolves the destination token.
-    // Passing any USDC address for chain 999 causes Across API errors.
-    const outputTokenAddress = '';
+    const outputTokenAddress = this.resolveTokenAddress('USDC', DESTINATION_CHAIN_ID);
 
     // Convert decimal amount to wei if needed (Across expects integer wei string)
     const amountWei = /^\d+$/.test(params.amount)
