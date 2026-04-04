@@ -35,7 +35,6 @@ export class AcrossClientService {
       tradeType: params.tradeType,
       amount: params.amount,
       inputToken: params.inputToken,
-      outputToken: params.outputToken,
       originChainId: params.originChainId.toString(),
       destinationChainId: params.destinationChainId.toString(),
       depositor: params.depositor,
@@ -43,6 +42,11 @@ export class AcrossClientService {
       integratorId: this.integratorId,
       slippage: params.slippage.toString(),
     });
+    // outputToken is optional — Across infers it for same-token cross-chain bridges.
+    // For HyperEVM (999), Across doesn't recognize standard USDC addresses.
+    if (params.outputToken) {
+      queryParams.set('outputToken', params.outputToken);
+    }
 
     const url = `${this.baseUrl}/swap/approval?${queryParams}`;
 

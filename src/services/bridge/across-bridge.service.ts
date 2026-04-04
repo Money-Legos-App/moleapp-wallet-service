@@ -418,9 +418,9 @@ export class AcrossBridgeService {
     );
 
     const inputTokenAddress = this.resolveTokenAddress(params.inputToken, params.sourceChainId);
-    // For HyperEVM destinations, Across auto-routes USDC→USDH.
-    // Use the source chain's USDC as outputToken (Across rejects HyperEVM token addresses).
-    const outputTokenAddress = this.resolveTokenAddress('USDC', params.sourceChainId);
+    // For HyperEVM: omit outputToken — Across auto-resolves the destination token.
+    // Passing any USDC address for chain 999 causes Across API errors.
+    const outputTokenAddress = '';
 
     // Convert decimal amount to wei if needed (Across expects integer wei string)
     const amountWei = /^\d+$/.test(params.amount)
