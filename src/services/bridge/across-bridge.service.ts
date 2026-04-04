@@ -418,7 +418,9 @@ export class AcrossBridgeService {
     );
 
     const inputTokenAddress = this.resolveTokenAddress(params.inputToken, params.sourceChainId);
-    const outputTokenAddress = this.resolveTokenAddress('USDC', DESTINATION_CHAIN_ID);
+    // For HyperEVM destinations, Across auto-routes USDC→USDH.
+    // Use the source chain's USDC as outputToken (Across rejects HyperEVM token addresses).
+    const outputTokenAddress = this.resolveTokenAddress('USDC', params.sourceChainId);
 
     const acrossResponse = await this.acrossClient.getSwapApproval({
       tradeType: 'exactInput',
