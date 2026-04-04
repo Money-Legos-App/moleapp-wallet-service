@@ -603,42 +603,84 @@ export class AcrossBridgeService {
       ? BigInt(amount)
       : BigInt(Math.round(parseFloat(amount) * 1e6)); // USDC 6 decimals
 
-    // Get all kernel accounts for this wallet
-    const kernelAccounts = await this.prisma.kernelAccount.findMany({
+    // Resolve the deterministic kernel address for this wallet.
+    // ZeroDev kernel addresses are identical across all EVM chains,
+    // so we only need one known address to check all chains.
+    const anyKernel = await this.prisma.kernelAccount.findFirst({
       where: { walletId },
-      select: { chainId: true, address: true },
+      select: { address: true },
     });
 
-    const supported = kernelAccounts.filter(ka => SUPPORTED_SOURCE_CHAINS.includes(ka.chainId));
+    if (!anyKernel) {
+      throw new Error('No kernel account found for wallet');
+    }
+
+    const kernelAddress = anyKernel.address;
 
     // Check HyperEVM first (no bridge needed — funds already at destination)
-    const destAccount = kernelAccounts.find(ka => ka.chainId === DESTINATION_CHAIN_ID);
-    if (destAccount) {
-      const balance = await this.checkUsdcBalance(destAccount.address, DESTINATION_CHAIN_ID, token);
-      if (balance >= requestedWei) {
+    try {
+      const destBalance = await this.checkUsdcBalance(kernelAddress, DESTINATION_CHAIN_ID, token);
+      if (destBalance >= requestedWei) {
         return {
-          chains: [{ chainId: DESTINATION_CHAIN_ID, balance: balance.toString(), amount: amount }],
+          chains: [{ chainId: DESTINATION_CHAIN_ID, balance: destBalance.toString(), amount: amount }],
           needsBridge: false,
           needsSweep: false,
         };
       }
+    } catch {
+      // HyperEVM balance check may fail if no USDC contract — skip
     }
 
-    // Query all chain balances in parallel
+    // Query ALL supported source chains by RPC in parallel.
+    // Don't rely on DB records — the kernel address is deterministic and
+    // identical across all EVM chains. Users may deposit on any chain
+    // without the backend knowing about it.
     const balanceResults = await Promise.all(
-      supported.map(async (ka) => ({
-        chainId: ka.chainId,
-        balance: await this.checkUsdcBalance(ka.address, ka.chainId, token),
-      }))
+      SUPPORTED_SOURCE_CHAINS.map(async (chainId) => {
+        try {
+          const balance = await this.checkUsdcBalance(kernelAddress, chainId, token);
+          if (balance > 0n) {
+            logger.info('Found USDC balance on chain', {
+              chainId, address: kernelAddress, balance: balance.toString(),
+            });
+          }
+          return { chainId, balance };
+        } catch (err) {
+          logger.warn('Balance check failed for chain', { chainId, error: String(err) });
+          return { chainId, balance: 0n };
+        }
+      })
     );
 
-    // --- Fix 1: Pick cheapest/fastest chain that has enough ---
+    // Auto-insert DB records for chains where we found balances but no DB row exists.
+    // This keeps the DB in sync without requiring manual chain registration.
+    const existingChains = await this.prisma.kernelAccount.findMany({
+      where: { walletId },
+      select: { chainId: true },
+    });
+    const existingChainIds = new Set(existingChains.map(k => k.chainId));
+
+    for (const result of balanceResults) {
+      if (result.balance > 0n && !existingChainIds.has(result.chainId)) {
+        try {
+          await this.kernelService.getOrCreateKernelAccount(walletId, result.chainId);
+          logger.info('Auto-created kernel account DB record', {
+            walletId, chainId: result.chainId, address: kernelAddress,
+          });
+        } catch (err) {
+          logger.warn('Failed to auto-create kernel account record', {
+            chainId: result.chainId, error: String(err),
+          });
+        }
+      }
+    }
+
+    // --- Pick cheapest/fastest chain that has enough ---
     const sufficient = balanceResults
       .filter(b => b.balance >= requestedWei)
       .sort((a, b) => this.estimateFillTime(a.chainId) - this.estimateFillTime(b.chainId));
 
     if (sufficient.length > 0) {
-      // Single cheapest valid chain
       return {
         chains: [{
           chainId: sufficient[0].chainId,
@@ -650,8 +692,7 @@ export class AcrossBridgeService {
       };
     }
 
-    // --- Fix 2: Knapsack sweep across multiple chains ---
-    // Sort by balance descending to pull from largest first (minimizes dust)
+    // --- Knapsack sweep across multiple chains ---
     const sorted = balanceResults
       .filter(b => b.balance > 0n)
       .sort((a, b) => (a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0));
@@ -664,7 +705,6 @@ export class AcrossBridgeService {
 
       const pullAmount = chain.balance < remaining ? chain.balance : remaining;
 
-      // Skip if pull amount is below Across minimum bridge amount
       if (pullAmount < ACROSS_MIN_BRIDGE_AMOUNT) {
         logger.info('Skipping chain below minimum bridge amount', {
           chainId: chain.chainId,
@@ -677,7 +717,7 @@ export class AcrossBridgeService {
       sweepChains.push({
         chainId: chain.chainId,
         balance: chain.balance.toString(),
-        amount: pullAmount.toString(), // Keep as wei string for consistency
+        amount: pullAmount.toString(),
       });
       remaining -= pullAmount;
     }
