@@ -422,9 +422,14 @@ export class AcrossBridgeService {
     // Use the source chain's USDC as outputToken (Across rejects HyperEVM token addresses).
     const outputTokenAddress = this.resolveTokenAddress('USDC', params.sourceChainId);
 
+    // Convert decimal amount to wei if needed (Across expects integer wei string)
+    const amountWei = /^\d+$/.test(params.amount)
+      ? params.amount
+      : BigInt(Math.round(parseFloat(params.amount) * 1e6)).toString();
+
     const acrossResponse = await this.acrossClient.getSwapApproval({
       tradeType: 'exactInput',
-      amount: params.amount,
+      amount: amountWei,
       inputToken: inputTokenAddress,
       outputToken: outputTokenAddress,
       originChainId: params.sourceChainId,
@@ -459,7 +464,7 @@ export class AcrossBridgeService {
         userOpHash: `pending-${randomUUID()}`,
         inputToken: inputTokenAddress,
         outputToken: outputTokenAddress,
-        inputAmount: params.amount,
+        inputAmount: amountWei,
         expectedOutputAmount: (acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0'),
         status: 'PENDING',
         kernelAccountAddress: kernelOrigin.address,
