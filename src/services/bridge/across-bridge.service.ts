@@ -509,6 +509,23 @@ export class AcrossBridgeService {
       slippage: 0.005,
     });
 
+    // SAFETY: Reject if slippage exceeds 2% (protects against MEV/high fees)
+    const outputAmount = BigInt(acrossResponse.steps?.bridge?.outputAmount ?? acrossResponse.expectedOutputAmount ?? '0');
+    const inputAmountBn = BigInt(amountWei);
+    if (inputAmountBn > 0n && outputAmount > 0n) {
+      const slippageBps = Number((inputAmountBn - outputAmount) * 10000n / inputAmountBn);
+      if (slippageBps > 200) { // 2% max
+        throw new Error(
+          `BRIDGE_SLIPPAGE_TOO_HIGH: ${slippageBps / 100}% value loss (input: ${amountWei}, output: ${outputAmount.toString()}). Max allowed: 2%. Try again later.`
+        );
+      }
+      logger.info('Bridge slippage check passed', {
+        slippageBps,
+        inputAmount: amountWei,
+        outputAmount: outputAmount.toString(),
+      });
+    }
+
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
     for (const approval of (acrossResponse.approvalTxns ?? [])) {
       calls.push({
