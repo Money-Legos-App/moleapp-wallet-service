@@ -31,14 +31,16 @@ const SUPPORTED_SOURCE_CHAINS = developmentMode
   ? [421614, 11155111, 84532]                        // Arbitrum Sepolia, Sepolia, Base Sepolia
   : [42161, 1, 8453, 10, 137];                       // Arbitrum, Ethereum, Base, Optimism, Polygon
 
-// HyperEVM: chain 999 (mainnet), 998 (testnet)
-// Across fills on HyperEVM → auto-routed to HyperCore as USDH
-const DESTINATION_CHAIN_ID = developmentMode ? 998 : 999;
+// Mission bridge destination: Arbitrum (NOT HyperEVM).
+// USDC lands on Master EOA on Arbitrum, then agent-service deposits
+// to HyperCore via the HL Arbitrum bridge contract (approve + sendUsd).
+// NEVER bridge to HyperEVM (999) — ERC-20 tokens sent to precompiles are lost.
+const DESTINATION_CHAIN_ID = developmentMode ? 421614 : 42161;
 
-// All chains valid as bridge destinations (source chains + HyperEVM)
+// All chains valid as bridge destinations (source chains only — no HyperEVM)
 const SUPPORTED_DESTINATION_CHAINS = developmentMode
-  ? [421614, 11155111, 84532, 998]                            // Testnet chains + HyperEVM testnet
-  : [42161, 1, 8453, 10, 137, 999];                           // Mainnet chains + HyperEVM
+  ? [421614, 11155111, 84532]                                 // Testnet source chains
+  : [42161, 1, 8453, 10, 137];                                // Mainnet source chains
 
 // Across enforces minimum bridge amounts (~$1-5 depending on relayer conditions)
 const ACROSS_MIN_BRIDGE_AMOUNT = 5_000_000n; // 5 USDC in 6-decimal wei
@@ -410,6 +412,75 @@ export class AcrossBridgeService {
   }): Promise<BridgeExecuteResponse> {
     if (!SUPPORTED_SOURCE_CHAINS.includes(params.sourceChainId)) {
       throw new Error(`BRIDGE_ROUTE_UNAVAILABLE: Chain ${params.sourceChainId} not supported`);
+    }
+
+    // Same-chain: source = destination (e.g., both Arbitrum).
+    // No Across bridge needed — just transfer USDC directly to the recipient.
+    if (params.sourceChainId === DESTINATION_CHAIN_ID) {
+      logger.info('Same-chain transfer — skipping Across bridge', {
+        sourceChainId: params.sourceChainId,
+        recipient: params.recipientAddress,
+        amount: params.amount,
+      });
+
+      const kernelOrigin = await this.kernelService.getOrCreateKernelAccount(
+        params.walletId,
+        params.sourceChainId,
+      );
+
+      const amountWei = /^\d+$/.test(params.amount)
+        ? params.amount
+        : BigInt(Math.round(parseFloat(params.amount) * 1e6)).toString();
+
+      const inputTokenAddress = this.resolveTokenAddress(params.inputToken, params.sourceChainId);
+
+      // Build ERC-20 transfer call
+      const { encodeFunctionData, parseAbi } = await import('viem');
+      const transferData = encodeFunctionData({
+        abi: parseAbi(['function transfer(address to, uint256 amount) returns (bool)']),
+        functionName: 'transfer',
+        args: [params.recipientAddress as `0x${string}`, BigInt(amountWei)],
+      });
+
+      const userOpResult = await this.kernelService.submitUserOperation(
+        params.walletId,
+        params.sourceChainId,
+        [{
+          to: inputTokenAddress as `0x${string}`,
+          value: 0n,
+          data: transferData,
+        }],
+      );
+
+      const { randomUUID } = await import('crypto');
+      const bridgeOp = await this.prisma.bridgeOperation.create({
+        data: {
+          walletId: params.walletId,
+          missionId: params.missionId,
+          originChainId: params.sourceChainId,
+          destinationChainId: params.sourceChainId,
+          userOpHash: userOpResult.userOpHash,
+          inputToken: inputTokenAddress,
+          outputToken: inputTokenAddress,
+          inputAmount: amountWei,
+          expectedOutputAmount: amountWei,
+          status: 'FILLED', // Same-chain = instant
+          kernelAccountAddress: kernelOrigin.address,
+          recipientAddress: params.recipientAddress,
+          metadata: { ...params.metadata, sameChain: true },
+        },
+      });
+
+      return {
+        bridgeOperationId: bridgeOp.id,
+        userOpHash: userOpResult.userOpHash,
+        status: 'submitted',
+        originChainId: params.sourceChainId,
+        destinationChainId: params.sourceChainId,
+        inputAmount: amountWei,
+        expectedOutputAmount: amountWei,
+        sponsored: true,
+      };
     }
 
     const kernelOrigin = await this.kernelService.getOrCreateKernelAccount(
