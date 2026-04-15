@@ -54,7 +54,6 @@ export interface EnvironmentConfig {
   // Service URLs
   userServiceUrl: string;
   notificationServiceUrl: string;
-  momoServiceUrl: string;
   
   // Turnkey configuration
   turnkeyBaseUrl: string;
@@ -104,6 +103,16 @@ export interface EnvironmentConfig {
   // Across Protocol (cross-chain bridge)
   acrossIntegratorId: string;
 
+  // LocalRamp (mobile money on/off-ramp)
+  localRampSecretKey: string;
+  localRampPublicKey: string;
+  localRampBaseUrl: string;
+  localRampWebhookToken: string;
+
+  // Momo fees (MoleApp margin on top of provider spread)
+  onRampFeePercent: number;
+  offRampFeePercent: number;
+
   // Test configuration
   testWalletPrivateKey?: string;
   testWalletAddress?: string;
@@ -146,7 +155,6 @@ const validateEnvironment = (): EnvironmentConfig => {
     // Service URLs (prefixed)
     userServiceUrl: getEnvVar('USER_SERVICE_URL', 'http://localhost:3001'),
     notificationServiceUrl: getEnvVar('NOTIFICATION_SERVICE_URL', 'http://localhost:3003'),
-    momoServiceUrl: getEnvVar('MOMO_SERVICE_URL', 'http://localhost:3004'),
 
     // Turnkey configuration (base URL shared, credentials prefixed)
     turnkeyBaseUrl: process.env.TURNKEY_BASE_URL || 'https://api.turnkey.com',
@@ -195,6 +203,16 @@ const validateEnvironment = (): EnvironmentConfig => {
 
     // Across Protocol (cross-chain bridge)
     acrossIntegratorId: process.env.ACROSS_INTEGRATOR_ID || '0x0000',
+
+    // LocalRamp (mobile money on/off-ramp)
+    localRampSecretKey: getEnvVar('LOCALRAMP_SECRET_KEY', ''),
+    localRampPublicKey: getEnvVar('LOCALRAMP_PUBLIC_KEY', ''),
+    localRampBaseUrl: getEnvVar('LOCALRAMP_BASE_URL', 'https://api.localramp.co'),
+    localRampWebhookToken: getEnvVar('LOCALRAMP_WEBHOOK_TOKEN', ''),
+
+    // Momo fees
+    onRampFeePercent: parseFloat(process.env.ON_RAMP_FEE_PERCENT || '0.0075'),
+    offRampFeePercent: parseFloat(process.env.OFF_RAMP_FEE_PERCENT || '0.01'),
 
     // Test configuration (prefixed)
     testWalletPrivateKey: getEnvVar('TEST_WALLET_PRIVATE_KEY') || undefined,

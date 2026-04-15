@@ -11,7 +11,11 @@ import bridgeRoutes from './routes/bridge.routes.js';
 import treasuryRoutes from './routes/treasury.routes.js';
 import agentRoutes from './routes/agent.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
+import momoRoutes from './routes/momo.routes.js';
 import { BridgePollerService } from './services/bridge/bridge-poller.service.js';
+import { getQueueService } from './services/momo/queue/queueService.js';
+import { registerCryptoMintWorker } from './services/momo/queue/workers/cryptoMintWorker.js';
+import { registerRefundWorker } from './services/momo/queue/workers/refundWorker.js';
 
 const app = express();
 
@@ -20,6 +24,7 @@ app.set('trust proxy', 1);
 
 // Raw body parser for webhook signature validation (must be BEFORE express.json)
 app.use('/api/v1/webhooks', express.raw({ type: 'application/json' }));
+app.use('/api/v2/momo/webhook', express.raw({ type: 'application/json' }));
 
 // Security and middleware
 app.use(helmet({
@@ -80,6 +85,9 @@ app.use('/internal/v1/agent', agentRoutes);
 // V1 Compatibility routes for legacy services
 app.use('/api/v1/wallets', walletRoutes);
 
+// Momo routes (LocalRamp on/off-ramp)
+app.use('/api/v2/momo', momoRoutes);
+
 // Webhook routes (no auth - validated by HMAC signature)
 app.use('/api/v1/webhooks', webhookRoutes);
 
@@ -112,12 +120,29 @@ app.use((error: any, req: express.Request, res: express.Response, next: express.
 const bridgePoller = new BridgePollerService(prisma);
 bridgePoller.start();
 
+// Initialize momo queue (BullMQ) and register workers
+(async () => {
+  try {
+    const queueService = getQueueService();
+    await queueService.initialize();
+    registerCryptoMintWorker();
+    registerRefundWorker();
+    logger.info('Momo queue service initialized with workers');
+  } catch (error) {
+    logger.warn('Momo queue init failed (Redis may not be available)', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+})();
+
 // Graceful shutdown handling
 const gracefulShutdown = async (signal: string) => {
   logger.info(`Received ${signal}. Starting graceful shutdown...`);
 
   try {
     bridgePoller.stop();
+    // Shutdown momo queue
+    try { await getQueueService().shutdown(); } catch {}
     // Close database connection
     await prisma.$disconnect();
     logger.info('Database connection closed');
@@ -157,6 +182,7 @@ const server = app.listen(env.port, () => {
   logger.info(`💳 Paymaster: Sponsored transactions enabled`);
   logger.info(`🔄 Swap: 0x API integration (${developmentMode ? 'Testnet' : 'Mainnet'})`);
   logger.info(`💰 Treasury: On/off-ramp settlements enabled`);
+  logger.info(`📱 Momo: LocalRamp mobile money integration enabled`);
   
   // Test database connection
   prisma.$connect()

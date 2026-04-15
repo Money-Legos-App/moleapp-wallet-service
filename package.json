@@ -27,6 +27,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.2.0",
+    "bullmq": "^5.1.0",
     "@simplewebauthn/server": "^10.0.1",
     "@turnkey/api-key-stamper": "0.6.1",
     "@turnkey/http": "3.16.3",
