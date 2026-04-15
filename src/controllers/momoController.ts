@@ -22,6 +22,25 @@ const DEFAULT_CHAIN_ID = parseInt(process.env.DEFAULT_CHAIN_ID || '42161');
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || 'https://moleapp-api-gateway.onrender.com';
 const commissionService = new CommissionService();
 
+/**
+ * Country → default LocalRamp payment method ID.
+ *
+ * Conservative defaults based on market dominance. Wave (SN/CI) intentionally
+ * excluded until LocalRamp support is confirmed via their payment-methods endpoint.
+ * Can be overridden per-request by passing `paymentMethod` from the mobile client.
+ */
+const COUNTRY_DEFAULT_PAYMENT_METHOD: Record<string, string> = {
+  SN: 'mobile_money_orange',  // Senegal — Orange Money (Wave TBD)
+  CI: 'mobile_money_orange',  // Ivory Coast — Orange Money
+  CM: 'mobile_money_mtn',     // Cameroon — MTN MoMo
+  RW: 'mobile_money_mtn',     // Rwanda — MTN MoMo
+  UG: 'mobile_money_mtn',     // Uganda — MTN MoMo
+  KE: 'mobile_money_mpesa',   // Kenya — M-Pesa
+  GH: 'mobile_money_mtn',     // Ghana — MTN MoMo
+  ZM: 'mobile_money_mtn',     // Zambia — MTN MoMo
+  NG: 'instant_p2p',          // Nigeria — bank transfer (NIP rails)
+} as const;
+
 // Helper: detect country from phone prefix
 function detectCountryFromPhone(phoneNumber: string): string | null {
   const normalized = phoneNumber.replace(/[\s\-\(\)\+]/g, '');
@@ -95,43 +114,53 @@ export async function getNetworks(req: Request, res: Response) {
  * GET /exchange-rates?from=XOF&to=USDT_BSC&country=SN&amount=10000
  */
 export async function getExchangeRates(req: Request, res: Response) {
+  const { from, to, country, amount } = req.query;
+  const fromStr = String(from || 'XOF');
+  const toStr = String(to || 'USDC');
+
+  // Mock rates covering all LocalRamp-supported fiat currencies (used as fallback)
+  const mockRates: Record<string, number> = {
+    'XOF-USDC': 650, 'XOF-USD': 650,
+    'NGN-USDC': 1550, 'NGN-USD': 1550,
+    'GHS-USDC': 15, 'GHS-USD': 15,
+    'KES-USDC': 130, 'KES-USD': 130,
+    'UGX-USDC': 3700, 'RWF-USDC': 1300, 'ZMW-USDC': 25,
+    'TZS-USDC': 2700, 'ZAR-USDC': 18, 'XAF-USDC': 650,
+  };
+
+  // Try LocalRamp first — fail gracefully if creds missing or service down
   try {
-    const { from, to, country, amount } = req.query;
-
-    if (from && to) {
-      try {
-        const senderAmount = amount ? parseFloat(amount as string) : 10000;
-        const quote = await rateService.getBuyQuote(from as string, (to as string) || 'USDT_BSC', senderAmount);
-        return res.json({
-          success: true,
-          data: {
-            fromCurrency: from, toCurrency: to || 'USDT_BSC',
-            buyRate: quote.exchange_rate, rate: quote.exchange_rate,
-            processorFee: quote.processor_fee, networkFee: quote.network_fee,
-            source: 'localramp', country: (country as string)?.toUpperCase(),
-            timestamp: new Date(), validUntil: new Date(Date.now() + 30_000),
-          },
-        });
-      } catch (lrError) {
-        logger.warn('LocalRamp rate fetch failed, falling back to mock', {
-          error: lrError instanceof Error ? lrError.message : String(lrError),
-        });
-      }
-    }
-
-    // Fallback mock rates
-    const mockRates: Record<string, number> = {
-      'XOF-USDC': 650, 'XOF-USD': 650, 'NGN-USDC': 1550, 'NGN-USD': 1550,
-      'GHS-USDC': 15, 'GHS-USD': 15, 'KES-USDC': 130, 'KES-USD': 130,
-      'TZS-USDC': 2700, 'UGX-USDC': 3700, 'ZAR-USDC': 18, 'XAF-USDC': 650,
-    };
-    const rate = mockRates[`${from}-${to}`];
-    if (!rate) return res.status(404).json({ success: false, error: 'Rate not found' });
-    res.json({ success: true, data: { fromCurrency: from, toCurrency: to, rate, source: 'mock', timestamp: new Date() } });
-  } catch (error: any) {
-    logger.error('Failed to get exchange rates', { error: error.message });
-    res.status(500).json({ success: false, error: error.message });
+    const senderAmount = amount ? parseFloat(String(amount)) : 10000;
+    // LocalRamp needs network-qualified crypto codes (USDC_ETH, USDT_BSC, etc.)
+    const receiverCurrency = toStr === 'USDC' ? 'USDT_BSC' : toStr;
+    const quote = await rateService.getBuyQuote(fromStr, receiverCurrency, senderAmount);
+    return res.json({
+      success: true,
+      data: {
+        fromCurrency: fromStr, toCurrency: toStr,
+        buyRate: quote.exchange_rate, rate: quote.exchange_rate,
+        processorFee: quote.processor_fee, networkFee: quote.network_fee,
+        source: 'localramp', country: (country as string)?.toUpperCase(),
+        timestamp: new Date(), validUntil: new Date(Date.now() + 30_000),
+      },
+    });
+  } catch (lrError) {
+    logger.warn('LocalRamp rate fetch failed, falling back to mock', {
+      error: lrError instanceof Error ? lrError.message : String(lrError),
+    });
   }
+
+  // Fallback: mock rate or reasonable default — NEVER return 500
+  const rate = mockRates[`${fromStr}-${toStr}`] || mockRates[`${fromStr}-USDC`] || 650;
+  return res.json({
+    success: true,
+    data: {
+      fromCurrency: fromStr, toCurrency: toStr, rate,
+      buyRate: rate, source: 'mock',
+      country: (country as string)?.toUpperCase(),
+      timestamp: new Date(), validUntil: new Date(Date.now() + 30_000),
+    },
+  });
 }
 
 /**
@@ -164,6 +193,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
     // Route crypto to MoleApp treasury (NOT user wallet).
     // On buy.crypto_sent webhook, treasury forwards (amount - 1.5% fee) to user.
     const treasuryAddress = treasuryService.getTreasuryAddress();
+    const resolvedPaymentMethod = paymentMethod || COUNTRY_DEFAULT_PAYMENT_METHOD[detectedCountry];
     const buyResult = await buyService.initiateBuy({
       reference: orderId,
       email: email || `${userId}@moleapp.africa`,
@@ -173,7 +203,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
       senderAmount: amount,
       destinationAddress: treasuryAddress,
       callbackUrl: `${WEBHOOK_BASE_URL}/api/v2/momo/webhook/localramp`,
-      paymentMethod,
+      paymentMethod: resolvedPaymentMethod,
     });
 
     const grossCrypto = quote.receiver_amount || (exchangeRate > 0 ? amount / exchangeRate : 0);
@@ -428,6 +458,29 @@ export async function handleLocalRampWebhook(req: Request, res: Response) {
     const transaction = await prisma.momoTransaction.findUnique({ where: { id: transactionId } });
     if (!transaction) {
       return res.json({ success: true, data: { received: true }, message: 'Acknowledged (tx not found)' });
+    }
+
+    // ── Idempotency guard ──
+    // LocalRamp retries webhooks every 30 min for 2 hours. Prevent double-processing
+    // by checking if the transaction already reached a terminal or later state.
+    const terminalStates = ['COMPLETED', 'FAILED', 'REFUNDED'];
+    if (terminalStates.includes(transaction.status || '')) {
+      logger.info('Webhook idempotency: transaction already terminal, skipping', {
+        transactionId, currentStatus: transaction.status, event: payload.event_type,
+      });
+      return res.json({ success: true, data: { received: true, alreadyProcessed: true } });
+    }
+
+    // Guard against re-processing buy.crypto_sent if already forwarded (CRYPTO_PROCESSING or COMPLETED)
+    if (payload.event_type === 'buy.crypto_sent' && transaction.lifecycleStage === 'CRYPTO_PROCESSING') {
+      logger.info('Webhook idempotency: treasury forward already in progress, skipping', { transactionId });
+      return res.json({ success: true, data: { received: true, alreadyProcessed: true } });
+    }
+
+    // Guard against re-processing buy.fiat_received if already past that stage
+    if (payload.event_type === 'buy.fiat_received' && transaction.currentState !== ON_RAMP_STATES.FIAT_PENDING) {
+      logger.info('Webhook idempotency: fiat already received, skipping', { transactionId });
+      return res.json({ success: true, data: { received: true, alreadyProcessed: true } });
     }
 
     if (payload.event_type === 'buy.fiat_received') {
