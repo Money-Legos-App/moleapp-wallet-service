@@ -148,7 +148,7 @@ export async function getExchangeRates(req: Request, res: Response) {
 
   try {
     const senderAmount = amount ? parseFloat(String(amount)) : 10000;
-    const payoutCode = toStr === 'USDC' ? 'USDC_BASE' : toStr;
+    const payoutCode = toStr === 'USDC' ? 'BASE_USDC' : toStr;
     const countryIso = (country as string | undefined)?.toUpperCase();
 
     const quote = await quoteService.getQuote({
@@ -209,7 +209,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const payoutCode = cryptoCurrency || 'USDC_BASE';
+    const payoutCode = cryptoCurrency || 'BASE_USDC';
     const depositChannel = paymentMethod || COUNTRY_DEFAULT_CHANNEL[detectedCountry] || 'mobile_money';
 
     const quote = await quoteService.getQuote({
@@ -321,7 +321,7 @@ export async function initiateOffRamp(req: Request, res: Response) {
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const depositCrypto = cryptoCurrency || 'USDC_BASE';
+    const depositCrypto = cryptoCurrency || 'BASE_USDC';
     const payoutChannel = destinationType === 'bank_account' ? 'bank_transfer' : 'mobile_money';
 
     const sourceAddress = walletAddress || await getUserWalletAddress(userId);

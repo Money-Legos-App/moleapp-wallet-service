@@ -176,7 +176,7 @@ export async function fonbnkOnRamp(req: Request, res: Response) {
 
     const quote = await quoteService.getQuote({
       deposit: { currencyType: 'fiat', currencyCode: currency, paymentChannel: 'mobile_money', amount: Number(amount), countryIsoCode: country },
-      payout: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'USDC_BASE', paymentChannel: 'crypto' },
+      payout: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'BASE_USDC', paymentChannel: 'crypto' },
     });
 
     const order = await orderService.createOrder({
@@ -207,7 +207,7 @@ export async function fonbnkOnRamp(req: Request, res: Response) {
         amount,
         currency,
         cryptoAmount: quote.payout.amount,
-        cryptoCurrency: cryptoCurrency || 'USDC_BASE',
+        cryptoCurrency: cryptoCurrency || 'BASE_USDC',
         exchangeRate: quote.exchangeRate,
         phoneNumber: phoneNumber || '',
         currentState: ON_RAMP_STATES.FIAT_PENDING,
@@ -267,7 +267,7 @@ export async function fonbnkOffRamp(req: Request, res: Response) {
     const { cryptoAmount, cryptoCurrency, currency, country, phoneNumber, email, destinationType, accountNumber, bankCode } = req.body;
 
     const quote = await quoteService.getQuote({
-      deposit: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'USDC_BASE', paymentChannel: 'crypto', amount: Number(cryptoAmount) },
+      deposit: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'BASE_USDC', paymentChannel: 'crypto', amount: Number(cryptoAmount) },
       payout: { currencyType: 'fiat', currencyCode: currency, paymentChannel: destinationType || 'mobile_money', countryIsoCode: country },
     });
 
@@ -304,7 +304,7 @@ export async function fonbnkOffRamp(req: Request, res: Response) {
         amount: quote.payout.amount,
         currency,
         cryptoAmount,
-        cryptoCurrency: cryptoCurrency || 'USDC_BASE',
+        cryptoCurrency: cryptoCurrency || 'BASE_USDC',
         exchangeRate: quote.exchangeRate,
         phoneNumber: phoneNumber || '',
         currentState: OFF_RAMP_STATES.CRYPTO_LOCKED,
