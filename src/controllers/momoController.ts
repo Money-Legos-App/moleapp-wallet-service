@@ -28,6 +28,22 @@ const COUNTRY_DEFAULT_CHANNEL: Record<string, string> = {
   NG: 'instant_p2p',
 };
 
+/**
+ * Default Fonbnk carrier code per country. Used when the mobile client
+ * doesn't pass a `carrierCode` explicitly. Conservative picks: the dominant
+ * mobile-money operator in each market. Override via request body.
+ */
+const DEFAULT_CARRIER_BY_COUNTRY: Record<string, string> = {
+  SN: 'sn_orange',  // Orange Senegal
+  CI: 'ci_orange',  // Orange Côte d'Ivoire
+  KE: 'ke_mpesa',   // Safaricom M-Pesa
+  GH: 'gh_mtn',
+  CM: 'cm_mtn',
+  RW: 'rw_mtn',
+  UG: 'ug_mtn',
+  ZM: 'zm_mtn',
+};
+
 function detectCountryFromPhone(phoneNumber: string): string | null {
   const normalized = phoneNumber.replace(/[\s\-\(\)\+]/g, '');
   const prefixes: Record<string, string> = {
@@ -202,7 +218,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
     const userId = (req as any).userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
-    const { walletAddress, phoneNumber, amount, currency, cryptoCurrency, country, email, paymentMethod } = req.body;
+    const { walletAddress, phoneNumber, amount, currency, cryptoCurrency, country, email, paymentMethod, carrierCode, fullName } = req.body;
     const orderIdLocal = `onramp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     logger.info('Initiating on-ramp (fonbnk)', { userId, amount, currency, orderId: orderIdLocal });
@@ -211,6 +227,8 @@ export async function initiateOnRamp(req: Request, res: Response) {
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
     const payoutCode = cryptoCurrency || 'BASE_USDC';
     const depositChannel = paymentMethod || COUNTRY_DEFAULT_CHANNEL[detectedCountry] || 'mobile_money';
+    const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
+    const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
 
     const quote = await quoteService.getQuote({
       deposit: { currencyType: 'fiat', currencyCode: fiatCurrency, paymentChannel: depositChannel, amount: Number(amount), countryIsoCode: detectedCountry },
@@ -226,10 +244,19 @@ export async function initiateOnRamp(req: Request, res: Response) {
       userEmail: email || `${userId}@moleapp.africa`,
       userIp: (req.ip || '0.0.0.0'),
       userCountryIsoCode: detectedCountry,
+      deposit: {
+        paymentChannel: depositChannel,
+        currencyType: 'fiat',
+        currencyCode: fiatCurrency,
+        countryIsoCode: detectedCountry,
+        carrierCode: resolvedCarrier,
+        amount: Number(amount),
+      },
+      payout: { paymentChannel: 'crypto', currencyType: 'crypto', currencyCode: payoutCode },
       fieldsToCreateOrder: {
-        ...quote.fieldsToCreateOrder,
-        walletAddress: treasuryAddress,
-        phoneNumber,
+        phoneNumber: String(phoneNumber || '').replace(/^\+/, ''),
+        fullName: resolvedFullName,
+        blockchainWalletAddress: treasuryAddress,
       },
       webhookUrl: `${WEBHOOK_BASE_URL}/api/v2/momo/webhook/fonbnk`,
     });
@@ -313,7 +340,7 @@ export async function initiateOffRamp(req: Request, res: Response) {
 
     const {
       walletAddress, phoneNumber, cryptoAmount, cryptoCurrency, currency, country,
-      email, destinationType, accountNumber, bankCode,
+      email, destinationType, accountNumber, bankCode, carrierCode, fullName,
     } = req.body;
     const orderIdLocal = `offramp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -323,6 +350,8 @@ export async function initiateOffRamp(req: Request, res: Response) {
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
     const depositCrypto = cryptoCurrency || 'BASE_USDC';
     const payoutChannel = destinationType === 'bank_account' ? 'bank_transfer' : 'mobile_money';
+    const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
+    const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
 
     const sourceAddress = walletAddress || await getUserWalletAddress(userId);
     if (!sourceAddress) return res.status(400).json({ success: false, error: 'No wallet found' });
@@ -334,7 +363,11 @@ export async function initiateOffRamp(req: Request, res: Response) {
     const exchangeRate = quote.exchangeRate;
     const fiatAmount = quote.payout.amount;
 
-    const fields: Record<string, unknown> = { ...quote.fieldsToCreateOrder, phoneNumber };
+    const fields: Record<string, unknown> = {
+      phoneNumber: String(phoneNumber || '').replace(/^\+/, ''),
+      fullName: resolvedFullName,
+      blockchainWalletAddress: sourceAddress,
+    };
     if (destinationType === 'bank_account') {
       fields.accountNumber = accountNumber;
       fields.bankCode = bankCode;
@@ -345,6 +378,19 @@ export async function initiateOffRamp(req: Request, res: Response) {
       userEmail: email || `${userId}@moleapp.africa`,
       userIp: (req.ip || '0.0.0.0'),
       userCountryIsoCode: detectedCountry,
+      deposit: {
+        paymentChannel: 'crypto',
+        currencyType: 'crypto',
+        currencyCode: depositCrypto,
+        amount: Number(cryptoAmount),
+      },
+      payout: {
+        paymentChannel: payoutChannel,
+        currencyType: 'fiat',
+        currencyCode: fiatCurrency,
+        countryIsoCode: detectedCountry,
+        carrierCode: payoutChannel === 'mobile_money' ? resolvedCarrier : undefined,
+      },
       fieldsToCreateOrder: fields,
       webhookUrl: `${WEBHOOK_BASE_URL}/api/v2/momo/webhook/fonbnk`,
     });

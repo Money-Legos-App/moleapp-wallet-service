@@ -14,6 +14,11 @@ const KYC_GATE_ENABLED = process.env.KYC_GATE_ENABLED === 'true';
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || 'https://moleapp-api-gateway.onrender.com';
 
+const DEFAULT_CARRIER_BY_COUNTRY: Record<string, string> = {
+  SN: 'sn_orange', CI: 'ci_orange', KE: 'ke_mpesa',
+  GH: 'gh_mtn', CM: 'cm_mtn', RW: 'rw_mtn', UG: 'ug_mtn', ZM: 'zm_mtn',
+};
+
 // Keycloak client for service-to-service auth (cached token, auto-refresh)
 const kcAuth = createKeycloakAuth({
   baseURL: process.env.KEYCLOAK_URL || 'http://keycloak:8080',
@@ -170,24 +175,37 @@ export async function fonbnkOnRamp(req: Request, res: Response) {
   }
 
   try {
-    const { amount, currency, country, cryptoCurrency, walletAddress, phoneNumber, email } = req.body;
+    const { amount, currency, country, cryptoCurrency, walletAddress, phoneNumber, email, carrierCode, fullName } = req.body;
 
     const treasuryAddress = treasuryService.getTreasuryAddress();
+    const upperCountry = String(country || '').toUpperCase();
+    const payoutCode = cryptoCurrency || 'BASE_USDC';
+    const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[upperCountry];
+    const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
 
     const quote = await quoteService.getQuote({
-      deposit: { currencyType: 'fiat', currencyCode: currency, paymentChannel: 'mobile_money', amount: Number(amount), countryIsoCode: country },
-      payout: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'BASE_USDC', paymentChannel: 'crypto' },
+      deposit: { currencyType: 'fiat', currencyCode: currency, paymentChannel: 'mobile_money', amount: Number(amount), countryIsoCode: upperCountry },
+      payout: { currencyType: 'crypto', currencyCode: payoutCode, paymentChannel: 'crypto' },
     });
 
     const order = await orderService.createOrder({
       quoteId: quote.quoteId,
       userEmail: email || `${userId}@moleapp.africa`,
       userIp: req.ip || '0.0.0.0',
-      userCountryIsoCode: country,
+      userCountryIsoCode: upperCountry,
+      deposit: {
+        paymentChannel: 'mobile_money',
+        currencyType: 'fiat',
+        currencyCode: currency,
+        countryIsoCode: upperCountry,
+        carrierCode: resolvedCarrier,
+        amount: Number(amount),
+      },
+      payout: { paymentChannel: 'crypto', currencyType: 'crypto', currencyCode: payoutCode },
       fieldsToCreateOrder: {
-        ...quote.fieldsToCreateOrder,
-        walletAddress: treasuryAddress,
-        phoneNumber,
+        phoneNumber: String(phoneNumber || '').replace(/^\+/, ''),
+        fullName: resolvedFullName,
+        blockchainWalletAddress: treasuryAddress,
       },
       webhookUrl: `${WEBHOOK_BASE_URL}/api/v2/momo/webhook/fonbnk`,
     });
@@ -264,16 +282,23 @@ export async function fonbnkOffRamp(req: Request, res: Response) {
   }
 
   try {
-    const { cryptoAmount, cryptoCurrency, currency, country, phoneNumber, email, destinationType, accountNumber, bankCode } = req.body;
+    const { cryptoAmount, cryptoCurrency, currency, country, phoneNumber, email, destinationType, accountNumber, bankCode, carrierCode, fullName, walletAddress } = req.body;
+
+    const upperCountry = String(country || '').toUpperCase();
+    const depositCrypto = cryptoCurrency || 'BASE_USDC';
+    const payoutChannel = destinationType === 'bank_account' ? 'bank_transfer' : 'mobile_money';
+    const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[upperCountry];
+    const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
 
     const quote = await quoteService.getQuote({
-      deposit: { currencyType: 'crypto', currencyCode: cryptoCurrency || 'BASE_USDC', paymentChannel: 'crypto', amount: Number(cryptoAmount) },
-      payout: { currencyType: 'fiat', currencyCode: currency, paymentChannel: destinationType || 'mobile_money', countryIsoCode: country },
+      deposit: { currencyType: 'crypto', currencyCode: depositCrypto, paymentChannel: 'crypto', amount: Number(cryptoAmount) },
+      payout: { currencyType: 'fiat', currencyCode: currency, paymentChannel: payoutChannel, countryIsoCode: upperCountry },
     });
 
     const fieldsToCreateOrder: Record<string, unknown> = {
-      ...quote.fieldsToCreateOrder,
-      phoneNumber,
+      phoneNumber: String(phoneNumber || '').replace(/^\+/, ''),
+      fullName: resolvedFullName,
+      blockchainWalletAddress: walletAddress || '',
     };
     if (destinationType === 'bank_account') {
       fieldsToCreateOrder.accountNumber = accountNumber;
@@ -284,7 +309,20 @@ export async function fonbnkOffRamp(req: Request, res: Response) {
       quoteId: quote.quoteId,
       userEmail: email || `${userId}@moleapp.africa`,
       userIp: req.ip || '0.0.0.0',
-      userCountryIsoCode: country,
+      userCountryIsoCode: upperCountry,
+      deposit: {
+        paymentChannel: 'crypto',
+        currencyType: 'crypto',
+        currencyCode: depositCrypto,
+        amount: Number(cryptoAmount),
+      },
+      payout: {
+        paymentChannel: payoutChannel,
+        currencyType: 'fiat',
+        currencyCode: currency,
+        countryIsoCode: upperCountry,
+        carrierCode: payoutChannel === 'mobile_money' ? resolvedCarrier : undefined,
+      },
       fieldsToCreateOrder,
       webhookUrl: `${WEBHOOK_BASE_URL}/api/v2/momo/webhook/fonbnk`,
     });

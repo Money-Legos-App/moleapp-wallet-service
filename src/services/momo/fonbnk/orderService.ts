@@ -44,11 +44,31 @@ export interface FonbnkOrder {
   createdAt: string;
 }
 
+export interface FonbnkOrderSide {
+  paymentChannel: string;
+  currencyType: string;
+  currencyCode: string;
+  countryIsoCode?: string;
+  carrierCode?: string;
+  amount?: number;
+}
+
+/**
+ * Create a Fonbnk order.
+ *
+ * Fonbnk's /api/v2/order requires the deposit/payout metadata (paymentChannel,
+ * currencyType, currencyCode, etc.) at the top level — mirroring the quote —
+ * plus a flat `fieldsToCreateOrder` containing user inputs (phoneNumber,
+ * carrierCode values, blockchainWalletAddress, fullName). `carrierCode` lives
+ * on the `deposit` object for fiat-in flows.
+ */
 export async function createOrder(params: {
   quoteId: string;
   userEmail: string;
   userIp: string;
   userCountryIsoCode: string;
+  deposit: FonbnkOrderSide;
+  payout: FonbnkOrderSide;
   fieldsToCreateOrder: Record<string, unknown>;
   webhookUrl?: string;
 }): Promise<FonbnkOrder> {
