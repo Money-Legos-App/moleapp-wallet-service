@@ -12,6 +12,7 @@ import treasuryRoutes from './routes/treasury.routes.js';
 import agentRoutes from './routes/agent.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
 import momoRoutes from './routes/momo.routes.js';
+import { initFonbnkConfig } from './services/momo/fonbnk/apiClient.js';
 import { BridgePollerService } from './services/bridge/bridge-poller.service.js';
 import { getQueueService } from './services/momo/queue/queueService.js';
 import { registerCryptoMintWorker } from './services/momo/queue/workers/cryptoMintWorker.js';
@@ -85,7 +86,18 @@ app.use('/internal/v1/agent', agentRoutes);
 // V1 Compatibility routes for legacy services
 app.use('/api/v1/wallets', walletRoutes);
 
-// Momo routes (LocalRamp on/off-ramp)
+// Initialize Fonbnk (if configured)
+if (process.env.FONBNK_CLIENT_ID && process.env.FONBNK_CLIENT_SECRET) {
+  initFonbnkConfig({
+    clientId: process.env.FONBNK_CLIENT_ID,
+    clientSecret: process.env.FONBNK_CLIENT_SECRET,
+    baseUrl: process.env.FONBNK_BASE_URL || 'https://sandbox-api.fonbnk.com',
+    webhookSecret: process.env.FONBNK_WEBHOOK_SECRET || '',
+  });
+  logger.info('Fonbnk provider initialized');
+}
+
+// Momo routes (Fonbnk on/off-ramp; legacy endpoints proxy to Fonbnk)
 app.use('/api/v2/momo', momoRoutes);
 
 // Webhook routes (no auth - validated by HMAC signature)
@@ -182,7 +194,7 @@ const server = app.listen(env.port, () => {
   logger.info(`💳 Paymaster: Sponsored transactions enabled`);
   logger.info(`🔄 Swap: 0x API integration (${developmentMode ? 'Testnet' : 'Mainnet'})`);
   logger.info(`💰 Treasury: On/off-ramp settlements enabled`);
-  logger.info(`📱 Momo: LocalRamp mobile money integration enabled`);
+  logger.info(`📱 Momo: Fonbnk mobile money integration enabled`);
   
   // Test database connection
   prisma.$connect()
