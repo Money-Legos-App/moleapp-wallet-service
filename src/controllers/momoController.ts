@@ -66,6 +66,30 @@ function countryToCurrency(country: string): string {
   return map[country] || 'NGN';
 }
 
+/**
+ * Map mobile-side crypto codes to Fonbnk's network-prefixed codes.
+ *
+ * Mobile sends generic codes like 'USDC' (LocalRamp legacy). Fonbnk's
+ * sandbox + prod use network prefixes ('BASE_USDC', 'ETHEREUM_USDT', …).
+ * Anything we don't recognize falls back to BASE_USDC since that's the
+ * only chain we currently support for ramp.
+ */
+function normalizeFonbnkCryptoCode(input: string | undefined | null): string {
+  if (!input) return 'BASE_USDC';
+  const upper = String(input).toUpperCase();
+  // Already network-prefixed (BASE_*, ETHEREUM_*, POLYGON_*, ARBITRUM_*, …)
+  if (/^[A-Z]+_[A-Z0-9]+/.test(upper)) return upper;
+  // Generic legacy codes from old LocalRamp flow
+  const map: Record<string, string> = {
+    USDC: 'BASE_USDC',
+    USDT: 'BNB_USDT',         // closest live Fonbnk equivalent for USDT_BSC era
+    USDT_BSC: 'BNB_USDT',
+    USDC_ETH: 'ETHEREUM_USDC',
+    USDT_ETH: 'ETHEREUM_USDT',
+  };
+  return map[upper] || 'BASE_USDC';
+}
+
 async function getUserWalletAddress(userId: string): Promise<string | null> {
   const wallet = await prisma.wallet.findFirst({
     where: { userId },
@@ -164,7 +188,7 @@ export async function getExchangeRates(req: Request, res: Response) {
 
   try {
     const senderAmount = amount ? parseFloat(String(amount)) : 10000;
-    const payoutCode = toStr === 'USDC' ? 'BASE_USDC' : toStr;
+    const payoutCode = normalizeFonbnkCryptoCode(toStr);
     const countryIso = (country as string | undefined)?.toUpperCase();
 
     const quote = await quoteService.getQuote({
@@ -225,7 +249,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const payoutCode = cryptoCurrency || 'BASE_USDC';
+    const payoutCode = normalizeFonbnkCryptoCode(cryptoCurrency) || 'BASE_USDC';
     const depositChannel = paymentMethod || COUNTRY_DEFAULT_CHANNEL[detectedCountry] || 'mobile_money';
     const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
     const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
@@ -348,7 +372,7 @@ export async function initiateOffRamp(req: Request, res: Response) {
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const depositCrypto = cryptoCurrency || 'BASE_USDC';
+    const depositCrypto = normalizeFonbnkCryptoCode(cryptoCurrency) || 'BASE_USDC';
     const payoutChannel = destinationType === 'bank_account' ? 'bank_transfer' : 'mobile_money';
     const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
     const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
