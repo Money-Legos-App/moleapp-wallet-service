@@ -53,6 +53,27 @@ export function createFonbnkClient(): AxiosInstance {
     return req;
   });
 
+  // Response interceptor — log failures with URL + response body so on-ramp/off-ramp
+  // 4xx/5xx errors are debuggable (default axios error message hides the URL).
+  _client.interceptors.response.use(
+    (resp) => resp,
+    (err) => {
+      // Use console.error so it shows up in Render logs even if the controller
+      // doesn't surface the full error.
+      const cfg = err?.config || {};
+      const status = err?.response?.status;
+      const body = err?.response?.data;
+      // eslint-disable-next-line no-console
+      console.error('[Fonbnk] request failed', {
+        method: cfg.method,
+        url: (cfg.baseURL || '') + (cfg.url || ''),
+        status,
+        responseBody: body,
+      });
+      return Promise.reject(err);
+    },
+  );
+
   return _client;
 }
 
