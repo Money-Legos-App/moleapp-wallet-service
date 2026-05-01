@@ -30,10 +30,33 @@ const kcAuth = createKeycloakAuth({
 interface KycGateResult {
   verified: boolean;
   status: string;
+  tier: number;
   inGrace: boolean;
   graceExpired: boolean;
   /** Whether on-ramp deposits are allowed right now */
   depositAllowed: boolean;
+  /** Per-transaction USD limit driven by KYC tier */
+  perTxnLimitUsd: number;
+}
+
+/**
+ * Per-transaction USD limit by KYC tier.
+ *  - 0 (unverified, BETA_LEGACY in grace): low cap so users can test
+ *  - 1 (BASIC): launch tier
+ *  - 2 (ENHANCED): high-volume tier (requires Enhanced KYC)
+ *
+ * Override via env: KYC_TIER_LIMIT_USD_0 / _1 / _2.
+ */
+function getTierLimitUsd(tier: number): number {
+  const overrides = [
+    process.env.KYC_TIER_LIMIT_USD_0,
+    process.env.KYC_TIER_LIMIT_USD_1,
+    process.env.KYC_TIER_LIMIT_USD_2,
+  ];
+  const defaults = [50, 500, 5000];
+  const idx = Math.max(0, Math.min(tier, defaults.length - 1));
+  const fromEnv = overrides[idx];
+  return fromEnv ? Number(fromEnv) : defaults[idx];
 }
 
 async function checkKycGate(userId: string): Promise<KycGateResult> {
@@ -41,9 +64,11 @@ async function checkKycGate(userId: string): Promise<KycGateResult> {
     return {
       verified: true,
       status: 'GATE_DISABLED',
+      tier: 99,
       inGrace: false,
       graceExpired: false,
       depositAllowed: true,
+      perTxnLimitUsd: Number.MAX_SAFE_INTEGER,
     };
   }
 
@@ -57,6 +82,7 @@ async function checkKycGate(userId: string): Promise<KycGateResult> {
     const verified = !!data.verified;
     const inGrace = !!data.inGrace;
     const graceExpired = !!data.graceExpired;
+    const tier: number = Number(data.tier ?? 0);
 
     // Deposits allowed only if verified OR within BETA_LEGACY grace window
     const depositAllowed = verified || inGrace;
@@ -64,9 +90,11 @@ async function checkKycGate(userId: string): Promise<KycGateResult> {
     return {
       verified,
       status: data.status,
+      tier,
       inGrace,
       graceExpired,
       depositAllowed,
+      perTxnLimitUsd: getTierLimitUsd(tier),
     };
   } catch (err: any) {
     // FAIL CLOSED — never silently pass through
@@ -74,9 +102,11 @@ async function checkKycGate(userId: string): Promise<KycGateResult> {
     return {
       verified: false,
       status: 'CHECK_FAILED',
+      tier: 0,
       inGrace: false,
       graceExpired: true,
       depositAllowed: false,
+      perTxnLimitUsd: 0,
     };
   }
 }
@@ -188,6 +218,25 @@ export async function fonbnkOnRamp(req: Request, res: Response) {
       payout: { currencyType: 'crypto', currencyCode: payoutCode, paymentChannel: 'crypto' },
     });
 
+    // ── Tier-based per-transaction limit ──
+    // Fonbnk's quote already returns a USD-equivalent amount; reject early if
+    // it exceeds what this user's KYC tier allows. Uses USD because Fonbnk
+    // limits + our internal tiers are USD-denominated regardless of fiat input.
+    const txnUsd = Number(quote.deposit?.amountUsd ?? 0);
+    if (txnUsd > kyc.perTxnLimitUsd) {
+      logger.warn('On-ramp blocked by tier limit', {
+        userId, tier: kyc.tier, txnUsd, perTxnLimitUsd: kyc.perTxnLimitUsd,
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'KYC_TIER_LIMIT_EXCEEDED',
+        message: `This transaction (~$${txnUsd.toFixed(2)}) exceeds your verification tier's limit ($${kyc.perTxnLimitUsd}). Complete enhanced verification to raise your limit.`,
+        tier: kyc.tier,
+        perTxnLimitUsd: kyc.perTxnLimitUsd,
+        txnUsd,
+      });
+    }
+
     const order = await orderService.createOrder({
       quoteId: quote.quoteId,
       userEmail: email || `${userId}@moleapp.africa`,
@@ -294,6 +343,22 @@ export async function fonbnkOffRamp(req: Request, res: Response) {
       deposit: { currencyType: 'crypto', currencyCode: depositCrypto, paymentChannel: 'crypto', amount: Number(cryptoAmount) },
       payout: { currencyType: 'fiat', currencyCode: currency, paymentChannel: payoutChannel, countryIsoCode: upperCountry },
     });
+
+    // Tier limit on off-ramp too — stops a tier-0 user from cashing out too much
+    const offrampUsd = Number(quote.deposit?.amountUsd ?? 0);
+    if (kyc.verified && offrampUsd > kyc.perTxnLimitUsd) {
+      logger.warn('Off-ramp blocked by tier limit', {
+        userId, tier: kyc.tier, offrampUsd, perTxnLimitUsd: kyc.perTxnLimitUsd,
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'KYC_TIER_LIMIT_EXCEEDED',
+        message: `This withdrawal (~$${offrampUsd.toFixed(2)}) exceeds your verification tier's limit ($${kyc.perTxnLimitUsd}). Complete enhanced verification to raise your limit.`,
+        tier: kyc.tier,
+        perTxnLimitUsd: kyc.perTxnLimitUsd,
+        txnUsd: offrampUsd,
+      });
+    }
 
     const fieldsToCreateOrder: Record<string, unknown> = {
       phoneNumber: String(phoneNumber || '').replace(/^\+/, ''),
