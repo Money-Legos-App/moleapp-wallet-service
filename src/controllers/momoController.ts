@@ -17,6 +17,7 @@ import { treasuryService } from '../services/treasury/treasuryService';
 import { ON_RAMP_STATES, OFF_RAMP_STATES } from '../services/momo/fsm';
 import * as quoteService from '../services/momo/fonbnk/quoteService';
 import * as orderService from '../services/momo/fonbnk/orderService';
+import { resolveUsdcChain, listUsdcChains } from '../services/momo/chains';
 
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || 'https://moleapp-api-gateway.onrender.com';
 const commissionService = new CommissionService();
@@ -96,6 +97,30 @@ async function getUserWalletAddress(userId: string): Promise<string | null> {
     orderBy: { createdAt: 'desc' },
   });
   return wallet?.address || null;
+}
+
+/**
+ * GET /chains — returns the USDC chains supported for on/off-ramp.
+ *
+ * Mobile uses this to render the chain picker on Buy/Sell. Single source
+ * of truth: the chain registry. No env dance to expand the list — add a
+ * chain in chains.ts and it shows up here automatically.
+ */
+export async function getChains(_req: Request, res: Response) {
+  res.json({
+    success: true,
+    data: {
+      chains: listUsdcChains().map((c) => ({
+        slug: c.slug,
+        displayName: c.displayName,
+        chainId: c.chainId,
+        contract: c.contract,
+        decimals: c.decimals,
+        fonbnkCode: c.fonbnkCode,
+      })),
+      defaultChain: 'base',
+    },
+  });
 }
 
 /**
@@ -203,6 +228,11 @@ export async function getExchangeRates(req: Request, res: Response) {
       ?.filter((f) => f.type === 'network' || f.name?.toLowerCase().includes('network'))
       ?.reduce((sum, f) => sum + (f.amount || 0), 0) ?? 0;
 
+    logger.info('Fonbnk rate ok', {
+      from: fromStr, to: toStr, country: countryIso,
+      payoutCode, rate: quote.exchangeRate, source: 'fonbnk',
+    });
+
     return res.json({
       success: true,
       data: {
@@ -215,6 +245,11 @@ export async function getExchangeRates(req: Request, res: Response) {
     });
   } catch (err: any) {
     logger.warn('Fonbnk rate fetch failed, falling back to mock', {
+      from: fromStr, to: toStr,
+      country: (country as string | undefined)?.toUpperCase(),
+      payoutCode: normalizeFonbnkCryptoCode(toStr),
+      status: err?.response?.status,
+      body: err?.response?.data,
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -242,14 +277,15 @@ export async function initiateOnRamp(req: Request, res: Response) {
     const userId = (req as any).userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
-    const { walletAddress, phoneNumber, amount, currency, cryptoCurrency, country, email, paymentMethod, carrierCode, fullName } = req.body;
+    const { walletAddress, phoneNumber, amount, currency, cryptoCurrency, country, email, paymentMethod, carrierCode, fullName, srcChain } = req.body;
     const orderIdLocal = `onramp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    logger.info('Initiating on-ramp (fonbnk)', { userId, amount, currency, orderId: orderIdLocal });
+    logger.info('Initiating on-ramp (fonbnk)', { userId, amount, currency, srcChain, orderId: orderIdLocal });
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const payoutCode = normalizeFonbnkCryptoCode(cryptoCurrency) || 'BASE_USDC';
+    const chain = resolveUsdcChain(srcChain || cryptoCurrency);
+    const payoutCode = chain.fonbnkCode;
     const depositChannel = paymentMethod || COUNTRY_DEFAULT_CHANNEL[detectedCountry] || 'mobile_money';
     const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
     const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
@@ -335,6 +371,7 @@ export async function initiateOnRamp(req: Request, res: Response) {
         id: orderIdLocal, status: 'PENDING', type: 'ON_RAMP', provider: 'fonbnk',
         country: detectedCountry, amount, currency: fiatCurrency,
         cryptoAmount: usdcAmount, cryptoCurrency: payoutCode, exchangeRate,
+        srcChain: chain.slug, usdcChainId: chain.chainId, usdcContractAddress: chain.contract, usdcDecimals: chain.decimals,
         phoneNumber: phoneNumber.slice(0, 5) + '***',
         commission: { amount: comm.commission, rate: comm.commissionRate, description: 'MoleApp service fee' },
         walletAddress, checkoutLink,
@@ -365,14 +402,18 @@ export async function initiateOffRamp(req: Request, res: Response) {
     const {
       walletAddress, phoneNumber, cryptoAmount, cryptoCurrency, currency, country,
       email, destinationType, accountNumber, bankCode, carrierCode, fullName,
+      srcChain,
     } = req.body;
     const orderIdLocal = `offramp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    logger.info('Initiating off-ramp (fonbnk)', { userId, cryptoAmount, currency, orderId: orderIdLocal });
+    logger.info('Initiating off-ramp (fonbnk)', { userId, cryptoAmount, currency, srcChain, orderId: orderIdLocal });
 
     const detectedCountry = (country || detectCountryFromPhone(phoneNumber) || 'SN').toUpperCase();
     const fiatCurrency = currency || countryToCurrency(detectedCountry);
-    const depositCrypto = normalizeFonbnkCryptoCode(cryptoCurrency) || 'BASE_USDC';
+    // Resolve the source chain once — falls back to Base if the mobile build
+    // doesn't pass a hint or passes a chain we don't support.
+    const chain = resolveUsdcChain(srcChain || cryptoCurrency);
+    const depositCrypto = chain.fonbnkCode;
     const payoutChannel = destinationType === 'bank_account' ? 'bank_transfer' : 'mobile_money';
     const resolvedCarrier = carrierCode || DEFAULT_CARRIER_BY_COUNTRY[detectedCountry];
     const resolvedFullName = fullName || `MoleApp User ${String(userId).slice(0, 8)}`;
@@ -454,9 +495,15 @@ export async function initiateOffRamp(req: Request, res: Response) {
       null;
 
     const treasuryAddress = treasuryService.getTreasuryAddress();
-    const usdcContractAddress = process.env.OFF_RAMP_USDC_CONTRACT_ADDRESS
-      || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base mainnet USDC
-    const usdcChainId = parseInt(process.env.OFF_RAMP_USDC_CHAIN_ID || '8453', 10); // Base mainnet
+    // Chain-aware: contract + chainId come from the resolved chain registry.
+    // Env overrides only apply on Base for backwards compatibility with prior
+    // single-chain deployments.
+    const usdcContractAddress = chain.slug === 'base'
+      ? (process.env.OFF_RAMP_USDC_CONTRACT_ADDRESS || chain.contract)
+      : chain.contract;
+    const usdcChainId = chain.slug === 'base'
+      ? parseInt(process.env.OFF_RAMP_USDC_CHAIN_ID || String(chain.chainId), 10)
+      : chain.chainId;
 
     await prisma.momoTransaction.create({
       data: {
@@ -506,7 +553,8 @@ export async function initiateOffRamp(req: Request, res: Response) {
         treasuryAddress,
         usdcContractAddress,
         usdcChainId,
-        usdcDecimals: 6,
+        usdcDecimals: chain.decimals,
+        srcChain: chain.slug,
         // Counterparty + UX bits
         phoneNumber: phoneNumber.slice(0, 5) + '***',
         commission: {

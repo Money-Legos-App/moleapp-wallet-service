@@ -11,6 +11,7 @@ import { body } from 'express-validator';
 import { authenticate } from '../middleware/authenticate';
 import {
   getChannels,
+  getChains,
   getNetworks,
   getExchangeRates,
   initiateOnRamp,
@@ -28,6 +29,7 @@ router.get('/health', (req, res) => {
 });
 
 router.get('/channels', getChannels);
+router.get('/chains', getChains);
 router.get('/networks', getNetworks);
 router.get('/exchange-rates', getExchangeRates);
 
