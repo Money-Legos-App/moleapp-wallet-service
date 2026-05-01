@@ -380,8 +380,29 @@ export async function initiateOffRamp(req: Request, res: Response) {
     const sourceAddress = walletAddress || await getUserWalletAddress(userId);
     if (!sourceAddress) return res.status(400).json({ success: false, error: 'No wallet found' });
 
+    // ── MoleApp fee split ─────────────────────────────────────────────
+    // Fonbnk pays fiat directly to the user — we can't intercept on the fiat
+    // side. So we take our fee from the gross USDC BEFORE handing off.
+    // Mobile then constructs a single batched UserOp: one transfer to treasury
+    // (feeUsdc), one transfer to Fonbnk's deposit address (netUsdc). Atomic.
+    const offRampFeePercent = parseFloat(process.env.OFF_RAMP_FEE_PERCENT || '0.01');
+    const grossUsdc = Number(cryptoAmount);
+    // Round fee + net to 6 decimal places (USDC precision) to avoid float drift
+    const feeUsdcRaw = grossUsdc * offRampFeePercent;
+    const feeUsdc = Math.floor(feeUsdcRaw * 1e6) / 1e6;
+    const netUsdc = Math.floor((grossUsdc - feeUsdc) * 1e6) / 1e6;
+
+    if (netUsdc <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'AMOUNT_TOO_SMALL',
+        message: 'Amount is too small to cover the platform fee. Try a larger amount.',
+      });
+    }
+
+    // Quote Fonbnk with the NET amount (what they'll actually receive)
     const quote = await quoteService.getQuote({
-      deposit: { currencyType: 'crypto', currencyCode: depositCrypto, paymentChannel: 'crypto', amount: Number(cryptoAmount) },
+      deposit: { currencyType: 'crypto', currencyCode: depositCrypto, paymentChannel: 'crypto', amount: netUsdc },
       payout: { currencyType: 'fiat', currencyCode: fiatCurrency, paymentChannel: payoutChannel, countryIsoCode: detectedCountry },
     });
     const exchangeRate = quote.exchangeRate;
@@ -406,7 +427,7 @@ export async function initiateOffRamp(req: Request, res: Response) {
         paymentChannel: 'crypto',
         currencyType: 'crypto',
         currencyCode: depositCrypto,
-        amount: Number(cryptoAmount),
+        amount: netUsdc,
       },
       payout: {
         paymentChannel: payoutChannel,
@@ -421,20 +442,38 @@ export async function initiateOffRamp(req: Request, res: Response) {
 
     const fonbnkFee = (order.chargedFees || []).reduce((sum, f) => sum + (f.amount || 0), 0);
 
+    // Extract Fonbnk's deposit address from order — defensive across possible shapes
+    // (transferInstructions varies by paymentChannel; sandbox uses the manual flow
+    // for crypto deposits so accountNumber holds the on-chain address).
+    const ti = order.transferInstructions as any;
+    const fonbnkDepositAddress: string | null =
+      ti?.blockchainWalletAddress ||
+      ti?.accountNumber ||
+      ti?.address ||
+      (order as any)?.deposit?.blockchainWalletAddress ||
+      null;
+
+    const treasuryAddress = treasuryService.getTreasuryAddress();
+    const usdcContractAddress = process.env.OFF_RAMP_USDC_CONTRACT_ADDRESS
+      || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base mainnet USDC
+    const usdcChainId = parseInt(process.env.OFF_RAMP_USDC_CHAIN_ID || '8453', 10); // Base mainnet
+
     await prisma.momoTransaction.create({
       data: {
         id: orderIdLocal, userId, walletAddress: sourceAddress,
         providerId: 'fonbnk', providerCode: `FONBNK_${detectedCountry}`,
         paymentMethod: destinationType === 'bank_account' ? 'BANK_TRANSFER' : 'MOBILE_MONEY',
         type: 'OFF_RAMP', status: 'PENDING',
-        amount: fiatAmount, currency: fiatCurrency, cryptoAmount, cryptoCurrency: depositCrypto,
+        amount: fiatAmount, currency: fiatCurrency, cryptoAmount: grossUsdc, cryptoCurrency: depositCrypto,
         exchangeRate, phoneNumber,
         currentState: OFF_RAMP_STATES.CRYPTO_LOCKED, lifecycleStage: 'PROVIDER_PENDING',
         providerTxId: order.id, providerRef: order.id,
         metadata: {
           provider: 'fonbnk', country: detectedCountry,
           fonbnkOrderId: order.id, quoteId: quote.quoteId,
-          depositAddress: order.transferInstructions as any,
+          transferInstructions: order.transferInstructions as any,
+          fonbnkDepositAddress, treasuryAddress, usdcContractAddress, usdcChainId,
+          grossUsdc, feeUsdc, netUsdc, offRampFeePercent,
           fees: order.chargedFees as any,
         },
       },
@@ -445,7 +484,7 @@ export async function initiateOffRamp(req: Request, res: Response) {
         transactionId: orderIdLocal,
         previousState: OFF_RAMP_STATES.CREATED, currentState: OFF_RAMP_STATES.CRYPTO_LOCKED,
         trigger: 'FONBNK_SELL_INITIATED',
-        metadata: { fonbnkOrderId: order.id },
+        metadata: { fonbnkOrderId: order.id, grossUsdc, feeUsdc, netUsdc },
       },
     });
 
@@ -453,15 +492,36 @@ export async function initiateOffRamp(req: Request, res: Response) {
       success: true,
       data: {
         id: orderIdLocal, status: 'PENDING', type: 'OFF_RAMP', provider: 'fonbnk',
-        country: detectedCountry, amount: fiatAmount, currency: fiatCurrency,
-        cryptoAmount, cryptoCurrency: depositCrypto, exchangeRate,
+        country: detectedCountry,
+        // Fiat side
+        amount: fiatAmount, currency: fiatCurrency, exchangeRate,
+        // Crypto side — break down so mobile can build the batched UserOp
+        cryptoCurrency: depositCrypto,
+        cryptoAmount: grossUsdc,
+        feeUsdc,
+        netUsdc,
+        offRampFeePercent,
+        // Settlement coordinates
+        depositAddress: fonbnkDepositAddress,
+        treasuryAddress,
+        usdcContractAddress,
+        usdcChainId,
+        usdcDecimals: 6,
+        // Counterparty + UX bits
         phoneNumber: phoneNumber.slice(0, 5) + '***',
-        commission: { amount: fonbnkFee, rate: 0, description: 'Provider fees' },
+        commission: {
+          amount: feeUsdc,
+          rate: offRampFeePercent,
+          description: `MoleApp fee (${(offRampFeePercent * 100).toFixed(1)}% of gross USDC)`,
+        },
         walletAddress: sourceAddress,
         transferInstructions: order.transferInstructions,
+        // Legacy fields kept for older mobile builds
         lrReference: order.id, lrFee: fonbnkFee, lrFiatAmount: fiatAmount,
         estimatedTime: '2-15 minutes',
-        message: `Send ${cryptoAmount} ${depositCrypto} to the provided deposit address to receive ${Math.round(fiatAmount)} ${fiatCurrency}.`,
+        message: fonbnkDepositAddress
+          ? `Send ${netUsdc} ${depositCrypto} (and ${feeUsdc} fee) from your wallet — we'll deposit ${Math.round(fiatAmount)} ${fiatCurrency} to your phone.`
+          : `Off-ramp initiated. Follow the on-screen instructions.`,
         createdAt: new Date(),
       },
     });
