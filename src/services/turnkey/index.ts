@@ -191,6 +191,19 @@ export class TurnkeyService {
     return this.exportService.exportWalletMnemonic(userId, targetPublicKey, ipAddress, userAgent);
   }
 
+  /**
+   * Export raw private key for a single chain (ethereum | bitcoin | solana)
+   */
+  async exportWalletPrivateKey(
+    userId: string,
+    chain: 'ethereum' | 'bitcoin' | 'solana',
+    targetPublicKey: string,
+    ipAddress?: string,
+    userAgent?: string
+  ): Promise<{ exportBundle: string; address: string; chain: string }> {
+    return this.exportService.exportWalletPrivateKey(userId, chain, targetPublicKey, ipAddress, userAgent);
+  }
+
   // ===== Cache Management =====
 
   /**

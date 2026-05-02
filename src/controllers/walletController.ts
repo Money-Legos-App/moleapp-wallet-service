@@ -745,6 +745,60 @@ export const walletController = {
   // WALLET EXPORT
   // ================================
 
+  // Export raw private key for a single chain (ethereum | bitcoin | solana) as encrypted bundle
+  async exportWalletPrivateKey(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const { targetPublicKey, chain } = req.body as {
+        targetPublicKey?: string;
+        chain?: 'ethereum' | 'bitcoin' | 'solana';
+      };
+
+      if (!userId) {
+        return ResponseUtils.error(res, 'User ID is required', 400, {
+          code: 'MISSING_USER_ID'
+        });
+      }
+
+      if (!targetPublicKey || !/^04[a-fA-F0-9]{128}$/.test(targetPublicKey)) {
+        return ResponseUtils.error(res, 'Valid P256 uncompressed public key is required', 400, {
+          code: 'INVALID_TARGET_KEY'
+        });
+      }
+
+      if (!chain || !['ethereum', 'bitcoin', 'solana'].includes(chain)) {
+        return ResponseUtils.error(res, 'chain must be one of: ethereum, bitcoin, solana', 400, {
+          code: 'INVALID_CHAIN'
+        });
+      }
+
+      const result = await turnkeyService.exportWalletPrivateKey(
+        userId,
+        chain,
+        targetPublicKey,
+        req.ip,
+        req.headers['user-agent']
+      );
+
+      logger.info(`Wallet private key export bundle generated for user ${userId}, chain ${chain}`);
+      return ResponseUtils.success(res, {
+        exportBundle: result.exportBundle,
+        exportType: 'PRIVATE_KEY',
+        chain: result.chain,
+        address: result.address,
+      }, 'Export bundle generated successfully');
+
+    } catch (error: any) {
+      logger.error('Error exporting wallet private key:', error);
+      return ResponseUtils.error(
+        res,
+        error.message || 'Failed to export private key',
+        error.statusCode || 500,
+        { code: 'WALLET_EXPORT_FAILED' }
+      );
+    }
+  },
+
   // Export wallet mnemonic (seed phrase) as encrypted bundle
   async exportWalletMnemonic(req: Request, res: Response) {
     try {

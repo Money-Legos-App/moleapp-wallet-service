@@ -221,6 +221,26 @@ router.post('/user/:userId/export/mnemonic',
   walletController.exportWalletMnemonic
 );
 
+// Export raw private key for a single chain (ethereum | bitcoin | solana) as encrypted bundle
+router.post('/user/:userId/export/private-key',
+  [
+    param('userId')
+      .isUUID()
+      .withMessage('Valid user ID is required'),
+    body('targetPublicKey')
+      .isString()
+      .matches(/^04[a-fA-F0-9]{128}$/)
+      .withMessage('Valid P256 uncompressed public key is required'),
+    body('chain')
+      .isString()
+      .isIn(['ethereum', 'bitcoin', 'solana'])
+      .withMessage('chain must be one of: ethereum, bitcoin, solana'),
+  ],
+  validateRequest,
+  enforceOwnership,
+  walletController.exportWalletPrivateKey
+);
+
 // Initialize kernel account for wallet (for legacy wallets without smart accounts)
 router.post('/:walletId/initialize-kernel',
   [
